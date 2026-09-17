@@ -1,3 +1,5 @@
+% Copyright (C) 2026 Johan Roenby
+% SPDX-License-Identifier: GPL-3.0-or-later
 \documentclass[11pt,a4paper]{article}
 
 \usepackage[margin=2.3cm]{geometry}
@@ -66,7 +68,8 @@ also on faces and processor boundaries.
 \sP{} is built into the library \texttt{libsurfacePosition} by
 \texttt{Allwmake} in its repository. It links OpenFOAM's \texttt{finiteVolume},
 \texttt{meshTools}, \texttt{sampling}, \texttt{lagrangian} and
-\texttt{geometricVoF} libraries. Its entries and output are those of \iH{}, so
+\texttt{geometricVoF} libraries, and is released, like OpenFOAM, under the
+GNU General Public License, version 3 or later. Its entries and output are those of \iH{}, so
 that a dictionary of \iH{} works after changing its \texttt{type} and
 \texttt{libs}, and post-processing tools for \iH{} read its output:
 \begin{lstlisting}

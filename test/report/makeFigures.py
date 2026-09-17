@@ -1,4 +1,6 @@
 #!/usr/bin/env pvbatch
+# Copyright (C) 2026 Johan Roenby
+# SPDX-License-Identifier: GPL-3.0-or-later
 #
 # ParaView figures of the test cases of the executed test suite, written to
 # figures/. Run with pvbatch from the report directory, after ../Allrun.

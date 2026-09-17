@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright (C) 2026 Johan Roenby
+# SPDX-License-Identifier: GPL-3.0-or-later
 #
 # Compares the interface elevation of interfaceHeight and surfacePosition with
 # the exact stream function wave, per line offset within the cells, and the

@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright (C) 2026 Johan Roenby
+# SPDX-License-Identifier: GPL-3.0-or-later
 #
 # Adds a layer of water above the water of the layers scenario, in
 # 0/alpha.water of the 10x10x10 unit cube (cell label i + 10 j + 100 k):

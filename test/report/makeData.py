@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright (C) 2026 Johan Roenby
+# SPDX-License-Identifier: GPL-3.0-or-later
 #
 # Writes the numbers, tables and plot data of the report from the results of
 # the executed test suite (results.json of each test and the postProcessing

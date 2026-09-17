@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright (C) 2026 Johan Roenby
+# SPDX-License-Identifier: GPL-3.0-or-later
 #
 # Writes system/lineLocations for a periodic wave case: vertical sampling lines
 # at a few cells across the wave length, each at the cell centre, a quarter of

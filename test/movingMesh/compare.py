@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright (C) 2026 Johan Roenby
+# SPDX-License-Identifier: GPL-3.0-or-later
 #
 # Checks of surfacePosition on changing meshes:
 #  - the line cells after each rebuild against a full search (log lines of

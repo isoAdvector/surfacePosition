@@ -1,4 +1,7 @@
 <!--
+  Copyright (C) 2026 Johan Roenby
+  SPDX-License-Identifier: GPL-3.0-or-later
+
   Written by test/report/makeReadme.py from test/report/README.md.in and the
   results of the executed test suite. Edit the template, not README.md.
 -->
@@ -33,6 +36,7 @@ also on faces and processor boundaries.
 3. [Test suite](#3-test-suite)
 4. [Findings of the tests](#4-findings-of-the-tests)
 5. [Reproducing the tests and this README](#5-reproducing-the-tests-and-this-readme)
+6. [License](#license)
 
 ## 1. Usage
 
@@ -448,3 +452,12 @@ the `postProcessing` data of the cases; `makeFigures.py` renders the figures
 from the case data with ParaView; `makeReadme.py` writes this README from
 `test/report/README.md.in`. The report and this README were generated from the
 run of {{testRun}}.
+
+## License
+
+Copyright (C) 2026 Johan Roenby. `surfacePosition` is an extension of OpenFOAM
+and, like OpenFOAM, free software: you can redistribute it and/or modify it
+under the terms of the GNU General Public License as published by the Free
+Software Foundation, either version 3 of the License, or (at your option) any
+later version. It is distributed in the hope that it will be useful, but
+without any warranty; see [LICENSE](LICENSE) for details.

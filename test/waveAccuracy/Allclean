@@ -1,4 +1,6 @@
 #!/bin/sh
+# Copyright (C) 2026 Johan Roenby
+# SPDX-License-Identifier: GPL-3.0-or-later
 cd "${0%/*}" || exit 1
 
 rm -rf coarse coarse_parallel medium medium_parallel log.compare results.json

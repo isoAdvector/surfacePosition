@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright (C) 2026 Johan Roenby
+# SPDX-License-Identifier: GPL-3.0-or-later
 #
 # Compares the heights and positions written by surfacePosition (and
 # interfaceHeight) in the special cases with the exact values, serial and

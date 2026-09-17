@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright (C) 2026 Johan Roenby
+# SPDX-License-Identifier: GPL-3.0-or-later
 #
 # Writes the README.md of the repository, a Markdown version of the report,
 # from the template README.md.in and generated/results.json (makeData.py):

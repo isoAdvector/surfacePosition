@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright (C) 2026 Johan Roenby
+# SPDX-License-Identifier: GPL-3.0-or-later
 #
 # Writes system/lineLocations with a grid of vertical sampling lines in the
 # cube of the large timing case, placed off the cell centres.

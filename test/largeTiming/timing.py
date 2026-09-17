@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright (C) 2026 Johan Roenby
+# SPDX-License-Identifier: GPL-3.0-or-later
 #
 # Time per step of the flow solution and of each function object in the large
 # timing case, from OpenFOAM's profiling written with the fields, and
