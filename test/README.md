@@ -29,8 +29,11 @@ memory; set `NPROCS`, `NCELLS`, `NSKIP`, `NSTEPS` and `CPUSET` to change the def
 
 ## Report
 
-`report/` holds a LaTeX report on the implementation and the tests. After
-`./Allrun`, `report/Allrun` writes its numbers and tables from the
+`report/` holds a LaTeX report on the implementation and the tests, and the
+template of the repository's `README.md`, a Markdown version of the report.
+After `./Allrun`, `report/Allrun` writes the numbers and tables from the
 `results.json` files and case data (`makeData.py`), renders the figures from
 the cases with ParaView (`makeFigures.py`, `pvbatch`; set `PVBATCH` if it is
-not on the path) and builds `report/report.pdf`.
+not on the path), builds `report/report.pdf` and writes `../README.md`
+(`makeReadme.py` from `report/README.md.in`). The figures, the PDF and the
+README are committed, so commit them after a new run.

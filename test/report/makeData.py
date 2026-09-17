@@ -6,12 +6,15 @@
 #   results.tex        macros with single numbers
 #   tab*.tex           tables
 #   wave*.csv          time series for the plots
+#   results.json       the macros and table rows in Markdown, for the README
 #
 # Usage: makeData.py   (from the report directory, after ../Allrun)
 
 import json
 import os
 import re
+import subprocess
+import time
 
 import numpy as np
 
@@ -20,6 +23,7 @@ OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "generated")
 os.makedirs(OUT, exist_ok=True)
 
 macros = {}
+tables = {}
 
 
 def load(test):
@@ -46,6 +50,45 @@ def write(name, text):
         f.write(text)
 
 
+def table(name, rows, nColumns):
+    """Table rows: lists of cells, or a string for a group heading"""
+    lines = []
+    for row in rows:
+        if isinstance(row, str):
+            if lines:
+                lines.append(r"\addlinespace")
+            lines.append(rf"\multicolumn{{{nColumns}}}{{l}}{{{row}}} \\")
+        else:
+            lines.append(" & ".join(row) + r" \\")
+    write(f"{name}.tex", "\n".join(lines) + "\n")
+    tables[name] = [
+        "| " + (tomd(row) + " |"*nColumns if isinstance(row, str)
+                else " | ".join(tomd(c) for c in row) + " |")
+        for row in rows
+    ]
+
+
+SUPERSCRIPT = str.maketrans("-0123456789", "\u207b\u2070\u00b9\u00b2\u00b3\u2074\u2075\u2076\u2077\u2078\u2079")
+UNITS = {"m": " m", "mm": " mm", "s": " s", "ms": " ms", "\\%": " %"}
+
+
+def tomd(text):
+    """Markdown version of the LaTeX of a macro or table cell"""
+    def number(x):
+        m = re.fullmatch(r"([-\d.]+)e([-+]?)0*(\d+)", x)
+        if not m:
+            return x
+        return f"{m.group(1)}\u00b710" + (m.group(2).replace("+", "") + m.group(3)).translate(SUPERSCRIPT)
+
+    text = re.sub(r"\\SI\{([^{}]*)\}\{([^{}]*)\}", lambda m: number(m.group(1)) + UNITS[m.group(2)], text)
+    text = re.sub(r"\\num\{([^{}]*)\}", lambda m: number(m.group(1)), text)
+    text = re.sub(r"\\texttt\{([^{}]*)\}", r"`\1`", text)
+    text = re.sub(r"\\textbf\{([^{}]*)\}", r"**\1**", text)
+    text = re.sub(r"\\emph\{([^{}]*)\}", r"*\1*", text)
+    text = re.sub(r"\$([^$]*)\$", lambda m: m.group(1).replace("\\times", "\u00d7"), text)
+    return text.replace("\\,", "\u202f").replace("--", "\u2013")
+
+
 # --------------------------------------------------------------------------- #
 # waveAccuracy
 
@@ -62,14 +105,12 @@ rows = []
 for case in ("coarse", "medium"):
     r = wave[case]
     nx, nz = MESH[case]
-    rows.append(rf"\multicolumn{{6}}{{l}}{{\emph{{{case}}}, ${nx}\times{nz}$ cells}} \\")
+    rows.append(rf"\emph{{{case}}}, ${nx}\times{nz}$ cells")
     for key, label in METHODS:
         st = r["methods"][key]
-        cells = [fixed(st[o]["rms"], 3) for o in ("0.50", "0.25", "0.02")]
-        rows.append(f"{label} & " + " & ".join(cells)
-                    + f" & {fixed(st['all']['mean'], 3)} & {fixed(st['all']['max'], 3)} \\\\")
-    rows.append(r"\addlinespace")
-write("tabWave.tex", "\n".join(rows[:-1]) + "\n")
+        rows.append([label] + [fixed(st[o]["rms"], 3) for o in ("0.50", "0.25", "0.02")]
+                    + [fixed(st["all"]["mean"], 3), fixed(st["all"]["max"], 3)])
+table("tabWave", rows, 6)
 
 for case, cap in (("coarse", "Coarse"), ("medium", "Medium")):
     r = wave[case]
@@ -135,8 +176,8 @@ for scenario, label in (("flat537", r"flat, $z=0.537$"), ("flat500", r"flat, $z=
             st = r[c]
             err = num(st["maxError"], 2) if st["maxError"] > 0 else "0"
             cells.append(err if not st["failed"] else r"\textbf{failed}")
-        rows.append(f"{label if procs == '1' else ''} & {procs} & " + " & ".join(cells) + r" \\")
-write("tabSpecial.tex", "\n".join(rows) + "\n")
+        rows.append([label if procs == "1" else "", procs] + cells)
+table("tabSpecial", rows, 7)
 macro("specialAlphaError", fixed(special["runs"]["flat537"]["checks"]["vertical alpha"]["maxError"]*1e3, 1))
 macro("specialPassed", "passed" if special["passed"] else "FAILED")
 macro("specialTol", num(special["tol"]))
@@ -150,8 +191,8 @@ for i, name in names.items():
     p = special["runs"]["flat500_parallel"]["interfaceHeight"][str(i)]["hB"]
     exact = special["runs"]["flat500"]["interfaceHeight"][str(i)]["exact"]
     ex = "--" if exact is None else fixed(exact, 3)
-    rows.append(f"{i} & {name} & {ex} & {fixed(s, 3)} & {fixed(p, 3)} \\\\")
-write("tabSpecialIH.tex", "\n".join(rows) + "\n")
+    rows.append([str(i), name, ex, fixed(s, 3), fixed(p, 3)])
+table("tabSpecialIH", rows, 5)
 
 # --------------------------------------------------------------------------- #
 # movingMesh
@@ -166,12 +207,13 @@ for run, label in (("amr", "amr"), ("amr_parallel", "amr"), ("motion", "motion")
     rbp = r["rebuilds"]["surfacePositionPlic1"]
     assert rb == rbp, (rb, rbp)
     el = r["elevation"]
-    rows.append(
-        f"{label} & {procs} & {r['steps']} & {rb['rebuilds']} & {rb['cells']} & {rb['missing']} & {rb['extra']}"
-        f" & {el['surfacePosition1']['nan'] + el['surfacePositionPlic1']['nan']}"
-        f" & {fixed(el['surfacePosition1']['rms'], 2)} & {fixed(el['surfacePositionPlic1']['rms'], 2)} \\\\"
-    )
-write("tabMoving.tex", "\n".join(rows) + "\n")
+    rows.append([
+        label, procs, str(r["steps"]), str(rb["rebuilds"]), str(rb["cells"]),
+        str(rb["missing"]), str(rb["extra"]),
+        str(el["surfacePosition1"]["nan"] + el["surfacePositionPlic1"]["nan"]),
+        fixed(el["surfacePosition1"]["rms"], 2), fixed(el["surfacePositionPlic1"]["rms"], 2),
+    ])
+table("tabMoving", rows, 10)
 macro("movingPassed", "passed" if moving["passed"] else "FAILED")
 macro("amrRebuilds", str(moving["runs"]["amr"]["rebuilds"]["surfacePosition1"]["rebuilds"]))
 macro("amrParallelRebuilds", str(moving["runs"]["amr_parallel"]["rebuilds"]["surfacePosition1"]["rebuilds"]))
@@ -207,8 +249,8 @@ for key, label in (("flow solution", f"flow solution (\\texttt{{{solver}}})"),
     c = cost[key]
     perLine = "" if key == "flow solution" else fixed(c["msPerStep"]/timing["lines"], 3)
     startup = fixed(c["startup"], 0) if key.startswith("surfacePosition") else ""
-    rows.append(f"{label} & {fixed(c['msPerStep'], 1)} & {perLine} & {fixed(c['spread'], 2)} & {startup} \\\\")
-write("tabTiming.tex", "\n".join(rows) + "\n")
+    rows.append([label, fixed(c["msPerStep"], 1), perLine, fixed(c["spread"], 2), startup])
+table("tabTiming", rows, 5)
 macro("timingCells", f"{timing['cells']:,}".replace(",", "\\,"))
 macro("timingProcs", str(timing["processors"]))
 macro("timingLines", str(timing["lines"]))
@@ -229,13 +271,25 @@ macro("timingDiffPlicMax", fixed(timing["elevation"]["surfacePositionPlic1"]["ma
 m = re.search(r"^real\s+(\d+)m([\d.]+)s", open(os.path.join(TESTS, "log.Allrun")).read(), re.M)
 macro("suiteTime", f"{int(m.group(1))}\\,min\\,{float(m.group(2)):.0f}\\,s" if m else "--")
 
-# The run: time of the suite log and the revision of the repository
-import subprocess
-import time
+# The run: time of the suite log, and the last revision of the source and the
+# tests (the report and the README are left out, as they are generated after
+# the run and committed with its results)
 stamp = time.strftime("%Y-%m-%d %H:%M", time.localtime(os.path.getmtime(os.path.join(TESTS, "log.Allrun"))))
-rev = subprocess.run(["git", "-C", TESTS, "describe", "--always", "--dirty"],
-                     capture_output=True, text=True).stdout.strip()
-macro("testRun", f"{stamp} (repository revision \\texttt{{{rev}}})")
+tested = [".", ":(exclude)test/report", ":(exclude)README.md"]
+
+
+def git(*args):
+    return subprocess.run(["git", "-C", os.path.join(TESTS, ".."), *args],
+                          capture_output=True, text=True).stdout.strip()
+
+
+rev = git("log", "-1", "--format=%h", "--", *tested)
+if git("status", "--porcelain", "--untracked-files=no", "--", *tested):
+    rev += " with uncommitted changes"
+macro("testRun", f"{stamp} (source and tests at revision \\texttt{{{rev}}})")
 
 write("results.tex", "".join(f"\\newcommand{{\\{k}}}{{{v}}}\n" for k, v in sorted(macros.items())))
+write("results.json", json.dumps(
+    {"macros": {k: tomd(v) for k, v in macros.items()}, "tables": tables},
+    indent=1, ensure_ascii=False))
 print(f"Wrote {len(macros)} macros and the tables to {OUT}")

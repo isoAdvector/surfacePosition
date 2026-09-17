@@ -1,0 +1,28 @@
+% Error of the elevation over one wave period (waveAccuracy), used by
+% report.tex and, as an image for the README, by waveErrorFigure.tex
+\begin{tikzpicture}
+  \begin{groupplot}[
+      group style={group size=2 by 1, horizontal sep=1.6cm},
+      width=7.7cm, height=5cm,
+      xlabel={$t$ [s]}, xmin=0, xmax=2,
+      grid=major, grid style={gray!25},
+      legend style={font=\footnotesize}, legend cell align=left,
+      tick label style={font=\footnotesize},
+    ]
+    \nextgroupplot[ylabel={error [mm]},
+      title={\footnotesize line \waveLineA, position \waveLineAOffset},
+      legend to name=waveLegend, legend columns=3]
+    \addplot[blue, thick] table[x=t, y=ihCellPoint] {generated/waveLine\waveLineA.csv};
+    \addlegendentry{\iH{}, cellPoint}
+    \addplot[red, thick] table[x=t, y=spPlic] {generated/waveLine\waveLineA.csv};
+    \addlegendentry{\sP{}, plic}
+    \addplot[black!60, dashed] table[x=t, y=spAlpha] {generated/waveLine\waveLineA.csv};
+    \addlegendentry{\sP{}, alpha}
+    \nextgroupplot[title={\footnotesize line \waveLineB, position \waveLineBOffset}]
+    \addplot[blue, thick] table[x=t, y=ihCellPoint] {generated/waveLine\waveLineB.csv};
+    \addplot[red, thick] table[x=t, y=spPlic] {generated/waveLine\waveLineB.csv};
+    \addplot[black!60, dashed] table[x=t, y=spAlpha] {generated/waveLine\waveLineB.csv};
+  \end{groupplot}
+\end{tikzpicture}
+\\[2pt]
+\ref{waveLegend}

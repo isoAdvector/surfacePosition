@@ -1,7 +1,10 @@
 #!/bin/sh
 cd "${0%/*}" || exit 1
 
-latexmk -C report.tex > /dev/null 2>&1
-rm -rf generated figures log.makeFigures log.latexmk
+# Intermediate files only: the figures, report.pdf and ../../README.md are
+# committed
+latexmk -c report.tex > /dev/null 2>&1
+latexmk -C waveErrorFigure.tex > /dev/null 2>&1
+rm -rf generated log.*
 
 #------------------------------------------------------------------------------

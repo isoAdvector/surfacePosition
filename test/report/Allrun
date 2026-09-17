@@ -2,7 +2,9 @@
 cd "${0%/*}" || exit 1
 #------------------------------------------------------------------------------
 # The report on surfacePosition from the results of the executed test suite
-# (../Allrun): numbers and tables, ParaView figures, and the PDF.
+# (../Allrun): numbers and tables, ParaView figures, the PDF, the wave error
+# plot as an image, and the README.md of the repository (a Markdown version of
+# the report). The figures, the PDF and the README are committed.
 #
 # PVBATCH: the pvbatch executable (default: pvbatch on the path, else the
 # newest ParaView in ~/ParaView)
@@ -30,5 +32,13 @@ PYEOF
 latexmk -pdf -interaction=nonstopmode -halt-on-error report.tex > log.latexmk 2>&1 \
  || { grep -A5 '^!' report.log; exit 1; }
 echo "Wrote $(pwd)/report.pdf"
+
+# The wave error plot of the report as an image for the README
+latexmk -pdf -interaction=nonstopmode -halt-on-error waveErrorFigure.tex \
+    > log.waveErrorFigure 2>&1 \
+ || { grep -A5 '^!' waveErrorFigure.log; exit 1; }
+pdftoppm -r 150 -png -singlefile waveErrorFigure.pdf figures/waveError || exit 1
+
+python3 makeReadme.py || exit 1
 
 #------------------------------------------------------------------------------
