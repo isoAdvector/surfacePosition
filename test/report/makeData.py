@@ -82,6 +82,7 @@ def tomd(text):
             return x
         return f"{m.group(1)}\u00b710" + (m.group(2).replace("+", "") + m.group(3)).translate(SUPERSCRIPT)
 
+    text = text.replace("\\_", "_")
     text = re.sub(r"\\SI\{([^{}]*)\}\{([^{}]*)\}", lambda m: number(m.group(1)) + UNITS[m.group(2)], text)
     text = re.sub(r"\\num\{([^{}]*)\}", lambda m: number(m.group(1)), text)
     text = re.sub(r"\\texttt\{([^{}]*)\}", r"`\1`", text)
@@ -266,6 +267,65 @@ macro("timingDiffMax", fixed(timing["elevation"]["surfacePosition1"]["max"], 3))
 # Wall time of the whole suite, from ../log.Allrun
 m = re.search(r"^real\s+(\d+)m([\d.]+)s", open(os.path.join(TESTS, "log.Allrun")).read(), re.M)
 macro("suiteTime", f"{int(m.group(1))}\\,min\\,{float(m.group(2)):.0f}\\,s" if m else "--")
+
+# --------------------------------------------------------------------------- #
+# compatibility (optional: test/compatibility/Allrun)
+
+REASONS = [
+    ("coordSet.H", r"\texttt{coordSet.H} in \texttt{fileFormats}"),
+    ("DynamicList has no member", r"no \texttt{DynamicList::push\_back}"),
+    ("PstreamBuffers::PstreamBuffers()", r"no default \texttt{PstreamBuffers}"),
+    ("listGatherValues", r"no \texttt{Pstream::listGatherValues}"),
+    ("non-contiguous", r"\texttt{listGatherValues} only for contiguous types"),
+]
+
+
+def reasons(messages):
+    out = []
+    for key, text in REASONS:
+        if any(key in m for m in messages) and text not in out:
+            out.append(text)
+    return out
+
+
+compatPath = os.path.join(TESTS, "compatibility", "results.json")
+if os.path.isfile(compatPath):
+    compat = json.load(open(compatPath))
+    versions = sorted(compat)
+    rows = []
+    lastAffected = {}
+    for v in versions:
+        r = compat[v]
+        messages = r["errors"] + r.get("errorsWithFileFormats", []) \
+            + [t["error"] for t in r["tests"].values() if t["error"]]
+        why = reasons(messages)
+        for key, text in REASONS[:-1]:     # compile errors only
+            if any(key in m for m in r["errors"] + r.get("errorsWithFileFormats", [])):
+                lastAffected[text] = v
+        comp = "--" if r["compiled"] is None else ("yes" if r["compiled"] else "no")
+        tests = []
+        for t in ("specialCases", "movingMesh"):
+            tests.append(("passed" if r["tests"][t]["passed"] else r"\textbf{failed}")
+                         if t in r["tests"] else "--")
+        rows.append([v, r["state"], comp] + tests + ["; ".join(why)])
+    table("tabCompat", rows, 6)
+
+    passing = [v for v in versions
+               if compat[v]["compiled"] and compat[v]["tests"]
+               and all(t["passed"] for t in compat[v]["tests"].values())]
+    macro("compatFirst", passing[0] if passing else "--")
+    macro("compatLast", passing[-1] if passing else "--")
+    macro("compatOldest", versions[0])
+    macro("compatNewest", versions[-1])
+    macro("compatSerialOnly", ", ".join(v for v in versions if compat[v]["state"] == "serial only") or "none")
+    macro("compatObstacles", "; ".join(f"{text} (up to {v})" for text, v in lastAffected.items()))
+    stamp = time.strftime("%Y-%m-%d", time.localtime(os.path.getmtime(compatPath)))
+    macro("compatDate", stamp)
+else:
+    for name in ("compatFirst", "compatLast", "compatOldest", "compatNewest",
+                 "compatSerialOnly", "compatObstacles", "compatDate"):
+        macro(name, "--")
+    table("tabCompat", [["--", "not run", "--", "--", "--", ""]], 6)
 
 # The run: time of the suite log, and the last revision of the source and the
 # tests (the report and the README are left out, as they are generated after
