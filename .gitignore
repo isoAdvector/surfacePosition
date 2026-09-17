@@ -1,0 +1,4 @@
+# Build
+lnInclude/
+Make/linux64*/
+Make/darwin*/

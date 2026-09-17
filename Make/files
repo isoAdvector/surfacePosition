@@ -1,0 +1,3 @@
+surfacePosition.C
+
+LIB = $(FOAM_USER_LIBBIN)/libsurfacePosition
