@@ -239,9 +239,12 @@ def figure_amr():
     d.SetRepresentationType("Surface With Edges")
     d.EdgeColor = [0.35, 0.35, 0.35]
 
+    # Lines and points just in front of the mesh
+    y0 = float(re.search(r"^y1\s+(\S+);", open(os.path.join(c, "system", "blockMeshDict")).read(),
+                         re.M).group(1)) - 0.006
     locs = locations(os.path.join(c, "system", "lineLocations"))
-    show_lines(v, [((x, -0.011, 0), (x, -0.011, 1)) for x, _, _ in locs], radius=0.003)
-    show_points(v, [(p[0], -0.012, p[2]) for p in last_positions(c, "surfacePosition1") if p], 0.01)
+    show_lines(v, [((x, y0, 0), (x, y0, 1)) for x, _, _ in locs], radius=0.003)
+    show_points(v, [(p[0], y0 - 0.001, p[2]) for p in last_positions(c, "surfacePosition1") if p], 0.01)
 
     camera(v, [0.5, -10, 0.5], [0.5, 0, 0.5], [0, 0, 1], scale=0.52)
     save(v, "amr.png", size)

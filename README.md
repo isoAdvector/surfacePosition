@@ -20,9 +20,9 @@ geometrically with the isosurface of the volume fraction.
 This README is a Markdown version of the report
 [test/report/report.pdf](test/report/report.pdf) on the implementation and the
 test suite in [test](test). All numbers, tables and figures are generated from
-the output of one run of the suite (wall time 1 min 44 s). In a
+the output of one run of the suite (wall time 1 min 57 s). In a
 1 000 000-cell case on 18 processors, `surfacePosition` costs
-5.2 ms per time step for 50 lines, against 1264 ms
+6.0 ms per time step for 50 lines, against 1683 ms
 for `interfaceHeight`; on the exact stream function wave it is more accurate
 than `interfaceHeight` on the same mesh, and it is exact for flat interfaces,
 also on faces and processor boundaries.
@@ -59,8 +59,8 @@ The tests in this README, with OpenFOAM.com v2512, show the weaknesses of
 
 - *Cost.* The search tree of the mesh is built anew for every location at every
   write. In a 1 000 000-cell case on 18 processors,
-  `interfaceHeight` costs 1264 ms per time step for 50
-  locations, 173 % of the flow solution itself
+  `interfaceHeight` costs 1683 ms per time step for 50
+  locations, 210 % of the flow solution itself
   ([section 4.4](#44-cost-in-a-large-case)).
 - *Parallel runs.* A line on a processor face or edge counts the liquid of the
   cells on all sides, e.g. twice the height on a processor face (table 3).
@@ -77,8 +77,8 @@ The tests in this README, with OpenFOAM.com v2512, show the weaknesses of
 `surfacePosition` keeps the entries and output of `interfaceHeight`, so that it
 can replace it directly, and addresses these points: the cells of each line are
 found once and followed through mesh changes, so that its cost per write does
-not depend on the mesh size (5.2 ms per step in the same case,
-244 times less); cells covering the same part of a line, also on
+not depend on the mesh size (6.0 ms per step in the same case,
+280 times less); cells covering the same part of a line, also on
 processor and cyclic faces, are averaged; its lines cross the whole mesh
 wherever the location is; and the liquid in the interface cells is measured
 with the isosurface cut of the geometric VoF reconstruction.
@@ -250,8 +250,12 @@ The suite (`test/Allrun`) runs four tests, each with a summary log and a
 |---|---|---|
 | `waveAccuracy` | accuracy against an exact wave | 1 and 4 |
 | `specialCases` | interfaces and lines on faces, edges, processor and cyclic patches | 1 and 8 |
-| `movingMesh` | line cells after adaptive refinement and mesh motion | 1 and 4 |
+| `movingMesh` | line cells after adaptive refinement and mesh motion | 1, 2 and 4 |
 | `largeTiming` | cost in a large case | 18 |
+
+Each test has a `baseCase`, which, like every case, has an `Allrun` (serial, or
+`-parallel`) and an `Allclean`. The test's `Allrun` copies it, sets the
+parameters of each copy and runs the copy with its `Allrun`.
 
 `largeTiming` runs on the last 18 cores, bound one process per
 core with local memory through an Open MPI rank file, while the other tests run
@@ -382,25 +386,31 @@ of the special lines, for the flat interface at z = 0.5 and the slab.*
 
 ### 4.3 Moving meshes
 
-A 2D standing wave (amplitude 0.05 m) in a closed unit box with a 20×20 mesh,
-one cell thick in y, is run with `interIsoFoam` in two variants, in serial and
-on 4 processors:
+A standing wave (amplitude 0.05 m) in a closed unit box with 20×20 cells in x
+and z is run with `interIsoFoam` in two cases, each in serial and in parallel:
 
 - **amr**: adaptive refinement of the interface cells to two levels at every
-  time step with `dynamicRefineFvMesh`, for 400 time steps. The
-  refinement also splits the cells in y, so that the seven lines, which lie in
-  the plane y = 0, run in the internal faces of the refined cells (figure 4a).
-- **motion**: a solid body oscillation of the whole mesh in x,
-  0.05 m · sin(5.3 t), for 0.6 s, with the lines fixed in space, so that the
-  line cells change at every time step.
+  time step with `dynamicRefineFvMesh`, for 400 time steps, on
+  2 processors in parallel. The refinement splits cells in all
+  three directions, so the case is 3D: 0.1 m wide with two cells in y and
+  symmetry planes at front and back. The seven lines lie in the plane y = 0
+  between the two cell layers, in internal faces at every refinement level
+  (figure 4a). The interface is reconstructed with `plicRDF`, which maps α to
+  the refined cells; `isoAlpha` does not. The first time step,
+  1e-5 s, keeps the Courant number of the start from rest below
+  0.5.
+- **motion**: a 2D case, one cell thick in y, with a solid body oscillation of
+  the whole mesh in x, 0.05 m · sin(5.3 t), for 0.6 s, on 4
+  processors in parallel. The lines are fixed in space, so that the line cells
+  change at every time step.
 
-| (a) amr, t = 0.0818 s | (b) motion, t = 0 | (c) motion, t = 0.2 s |
+| (a) amr, t = 2.3202 s | (b) motion, t = 0 | (c) motion, t = 0.2 s |
 |:---:|:---:|:---:|
 | ![amr](test/report/figures/amr.png) | ![motion t=0](test/report/figures/motion_t0.png) | ![motion t=0.2](test/report/figures/motion_t2.png) |
 
 *Figure 4: `movingMesh`. (a) Refined mesh, volume fraction, lines and the
-positions found by `surfacePosition`. (b, c) Mesh coloured by processor on 4
-processors with line 3 (red): the mesh moves right, and line 3 passes from the
+positions found by `surfacePosition`. (b, c) Mesh coloured by processor on
+4 processors with line 3 (red): the mesh moves right, and line 3 passes from the
 right to the left subdomains.*
 
 *Table 4: `movingMesh`: line cells after all mesh changes compared with all
@@ -409,27 +419,41 @@ rms and largest difference of h<sub>B</sub> from `interfaceHeight` [mm].*
 
 | Case | Proc. | Steps | Changes | Line cells found | missing | extra | off mesh | rms vs. `interfaceHeight` | max |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| amr | 1 | 400 | 177 | 48730 | 0 | 0 | 0 | 6.52 | 42.1 |
-| amr | 4 | 400 | 396 | 109857 | 0 | 0 | 0 | 7.26 | 27.4 |
+| amr | 1 | 400 | 282 | 98277 | 0 | 0 | 0 | 1.03 | 13.4 |
+| amr | 2 | 400 | 278 | 96851 | 0 | 0 | 0 | 0.86 | 12.5 |
 | motion | 1 | 51 | 50 | 7000 | 0 | 0 | 0 | 0.43 | 3.0 |
 | motion | 4 | 51 | 50 | 7000 | 0 | 0 | 0 | 0.43 | 3.0 |
 
 In all runs the flood fill finds exactly the cells crossing the lines
-(table 4): 177 and 396 mesh changes in the
+(table 4): 282 and 278 mesh changes in the
 serial and parallel amr runs, 50 in the motion runs, and no
 line misses the mesh. In the parallel motion run, line 3 moves from the
 subdomains right of a processor boundary to those left of it between t = 0.1
 and 0.1125 s (figure 4); the flood fill follows it across the processor faces
 and finds all 7000 line cells, as in serial.
 
-In the amr runs the refinement produces spurious velocities that limit the time
-step to about 0.00021 s and throw up droplets. The heights of
-`surfacePosition` and `interfaceHeight` still differ by at most
-42 mm, since both measure the liquid volume along the line; serial
-and parallel amr runs diverge (`interfaceHeight` differs by up to
-10.8 mm). In the motion runs, serial and parallel flows differ
-slightly, by up to 0.13 mm in `interfaceHeight` and
-0.21 mm in `surfacePosition`.
+In the serial amr run the heights of `surfacePosition` and `interfaceHeight`
+differ by 1.0 mm rms and at most 13 mm. Many of the large
+differences are single time steps at which the height of `surfacePosition`
+jumps by about one cell height of the finest level and back, which
+`interfaceHeight` does not show. These jumps also make up the largest
+difference between the serial and parallel amr runs: up to
+13.9 mm for `surfacePosition`, against 0.8 mm
+for `interfaceHeight`. The liquid volume changes by at most 9·10⁻⁸
+of its initial value, and the median time step is 0.0061 s. In the
+motion runs, serial and parallel differ slightly, by up to
+0.13 mm in `interfaceHeight` and 0.21
+mm in `surfacePosition`.
+
+> **Note: liquid loss in OpenFOAM, unrelated to `surfacePosition`.** On 4
+> processors, the amr case loses liquid: at some of the time steps where cells
+> are unrefined, whole cells of the finest level lose their liquid, and the time
+> step becomes small. This was found in trial runs with both `plicRDF` and
+> `isoAlpha`, with scotch and simple decompositions and with more buffer
+> layers, and identically without any function objects, while the serial run
+> and the run on 2 processors conserve the liquid. It is a fault of OpenFOAM's
+> parallel unrefinement or of `interIsoFoam`'s mapping on it; the amr case is
+> therefore run on 2 processors.
 
 ### 4.4 Cost in a large case
 
@@ -452,15 +476,15 @@ of the first steps beyond the steady cost (the line search), in ms.*
 
 | | per step | per line | range | start-up |
 |---|---:|---:|---:|---:|
-| flow solution (`interIsoFoam`) | 730.5 |  | 2.22 |  |
-| `surfacePosition` | 5.2 | 0.104 | 1.89 | 1147 |
-| `interfaceHeight` | 1264.4 | 25.287 | 0.37 |  |
+| flow solution (`interIsoFoam`) | 803.2 |  | 2.02 |  |
+| `surfacePosition` | 6.0 | 0.120 | 2.02 | 1155 |
+| `interfaceHeight` | 1682.7 | 33.654 | 0.33 |  |
 
-`surfacePosition` costs 5.2 ms per step, 0.7 % of the
+`surfacePosition` costs 6.0 ms per step, 0.7 % of the
 flow solution, including the interpolation of α to the mesh points, while
-`interfaceHeight` costs 1264 ms, 173 % of the flow
-solution and 244 times as much as `surfacePosition` (table 5). The
-initial line search of `surfacePosition` takes about 1147 ms once.
+`interfaceHeight` costs 1683 ms, 210 % of the flow
+solution and 280 times as much as `surfacePosition` (table 5). The
+initial line search of `surfacePosition` takes about 1155 ms once.
 The heights of `surfacePosition` and `interfaceHeight` agree to
 0.123 mm (rms 0.026 mm).
 
@@ -478,12 +502,11 @@ lists with `append` before v2212 and `push_back` from v2212 (chosen with the
 `OPENFOAM` version macro), gathers the liquid parts on the master with its own
 `PstreamBuffers` exchange, as `Pstream::listGatherValues` gathers lists of
 lists only from v2406, and has `fileFormats` on its include path, where
-`coordSet.H` is before v2206. The tests pass with v2006–v2106, v2306–v2606. With
-v2112–v2212, `interIsoFoam` crashes (a floating point exception in
-`fvc::reconstruct` with adaptive refinement) or diverges (with the moving mesh
-in parallel) in the `movingMesh` cases, in the same way when they are run
-without function objects; these are faults of the solver in these versions, not
-of `surfacePosition`. Other failures: none. The installations of
+`coordSet.H` is before v2206. The tests pass with v2006–v2106, v2206–v2606. With
+v2112, `interIsoFoam` fails in the `movingMesh` cases of table 6
+(the parallel motion run diverges, with the time step going to zero) in the
+same way when they are run without function objects; this is a fault of the
+solver in that version, not of `surfacePosition`. Other failures: none. The installations of
 v2006–v2106 were built with an Open MPI that is no longer on this
 machine; they run, and were tested, only in serial.
 
@@ -496,9 +519,9 @@ the tests with it, and the reasons for failures.*
 | v2006 | serial only | yes | passed (serial) | passed (serial) |  |
 | v2012 | serial only | yes | passed (serial) | passed (serial) |  |
 | v2106 | serial only | yes | passed (serial) | passed (serial) |  |
-| v2112 | runs | yes | passed | **failed** | time limit reached; also without function objects: `amr_parallel`, `motion_parallel` |
-| v2206 | runs | yes | passed | **failed** | `amr`: solver crash (floating point exception); also without function objects: `amr`, `amr_parallel` |
-| v2212 | runs | yes | passed | **failed** | `amr`: solver crash (floating point exception); also without function objects: `amr`, `amr_parallel` |
+| v2112 | runs | yes | passed | **failed** | time limit reached; also without function objects: `motion_parallel` |
+| v2206 | runs | yes | passed | passed |  |
+| v2212 | runs | yes | passed | passed |  |
 | v2306 | runs | yes | passed | passed |  |
 | v2312 | runs | yes | passed | passed |  |
 | v2406 | runs | yes | passed | passed |  |
@@ -517,9 +540,9 @@ mesh tests and fixed:
    $|a| \le 10^{-300}|\mathbf{S}_f|$. For the lines in the face planes y = 0 of
    the refined cells, round-off gave $|a|/|\mathbf{S}_f| \approx 10^{-17}$, so
    $b/a$ became an arbitrary distance that could clip a crossed cell away and
-   disconnect the flood fill. In a separate run of the serial amr case with the
-   old test, all of its 177 mesh changes missed line cells; with
-   eq. (1) none does.
+   disconnect the flood fill. In a separate run of the serial amr case (then
+   2D) with the old test, every mesh change missed line cells; with eq. (1)
+   none does.
 2. *Lines lost across processor boundaries.* The flood fill followed internal
    faces only. When the motion moved line 3 into the neighbouring subdomains,
    neither side found any cell, and the line was lost for the rest of the run.
@@ -537,6 +560,15 @@ outside the domain; the liquid length of [section
 from `surfaceIteratorIso`, documented to point from high to low values, gave the
 liquid on the wrong side in the flat test, so the liquid side is taken from the
 centre of the submerged part of the cell instead.
+
+The amr case was first set up in 2D, one cell thick. The refinement then also
+split the cells in y, and together with `isoAlpha`, which leaves α of the
+refined cells unmapped, this gave large spurious velocities that limited the
+time step, and heights of `surfacePosition` and `interfaceHeight` differing by
+several centimetres. The 3D setup with `plicRDF` of [section
+4.3](#43-moving-meshes) removes both. On 4 processors, OpenFOAM loses liquid in
+the amr case ([section 4.3](#43-moving-meshes)), unrelated to
+`surfacePosition`.
 
 The tests also show that `interfaceHeight` (v2512) is wrong on processor faces
 and edges, on cyclic patches, and for locations outside the vertical extent of
@@ -564,7 +596,7 @@ found in `~/OpenFOAM` (or `FOAM_INSTALLS`) and takes about eight minutes.
 the `postProcessing` data of the cases; `makeFigures.py` renders the figures
 from the case data with ParaView; `makeReadme.py` writes this README from
 `test/report/README.md.in`. The report and this README were generated from the
-run of 2026-09-17 16:22 (source and tests at revision `772d91b`).
+run of 2026-09-17 18:10 (source and tests at revision `9f21588`).
 
 ## License
 

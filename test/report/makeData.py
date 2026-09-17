@@ -200,11 +200,24 @@ table("tabSpecialIH", rows, 8)
 # movingMesh
 
 moving = load("movingMesh")
+
+
+def nProcs(run):
+    return len([d for d in os.listdir(run) if re.fullmatch(r"processor\d+", d)])
+
+
+def volume_change(run):
+    """Relative change of the liquid volume over a run, from its log"""
+    log = open(os.path.join(TESTS, "movingMesh", run, "log.interIsoFoam")).read()
+    v = [float(x) for x in re.findall(r"^Phase-1 volume fraction = (\S+)", log, re.M)]
+    return abs(v[-1] - v[0])/v[0]
+
+
 rows = []
 for run, label in (("amr", "amr"), ("amr_parallel", "amr"), ("motion", "motion"),
                    ("motion_parallel", "motion")):
     r = moving["runs"][run]
-    procs = "4" if run.endswith("parallel") else "1"
+    procs = str(nProcs(os.path.join(TESTS, "movingMesh", run))) if run.endswith("parallel") else "1"
     rb = r["rebuilds"]["surfacePosition1"]
     el = r["elevation"]
     rows.append([
@@ -219,7 +232,12 @@ macro("amrRebuilds", str(moving["runs"]["amr"]["rebuilds"]["surfacePosition1"]["
 macro("amrParallelRebuilds", str(moving["runs"]["amr_parallel"]["rebuilds"]["surfacePosition1"]["rebuilds"]))
 macro("amrSteps", str(moving["runs"]["amr"]["steps"]))
 macro("amrMaxDiff", fixed(moving["runs"]["amr"]["elevation"]["surfacePosition1"]["max"], 0))
+macro("amrRmsDiff", fixed(moving["runs"]["amr"]["elevation"]["surfacePosition1"]["rms"], 1))
 macro("amrParallelDiffIH", fixed(moving["runs"]["amr parallel"]["interfaceHeight1"]*1e3, 1))
+macro("amrParallelDiffSP", fixed(moving["runs"]["amr parallel"]["surfacePosition1"]*1e3, 1))
+macro("amrProcs", str(nProcs(os.path.join(TESTS, "movingMesh", "amr_parallel"))))
+macro("motionProcs", str(nProcs(os.path.join(TESTS, "movingMesh", "motion_parallel"))))
+macro("amrVolumeChange", num(max(volume_change("amr"), volume_change("amr_parallel")), 1))
 macro("motionRebuilds", str(moving["runs"]["motion"]["rebuilds"]["surfacePosition1"]["rebuilds"]))
 macro("motionCells", str(moving["runs"]["motion_parallel"]["rebuilds"]["surfacePosition1"]["cells"]))
 macro("motionParallelDiffSP", fixed(moving["runs"]["motion parallel"]["surfacePosition1"]*1e3, 2))
@@ -229,6 +247,9 @@ macro("motionParallelDiffIH", fixed(moving["runs"]["motion parallel"]["interface
 log = open(os.path.join(TESTS, "movingMesh", "amr", "log.interIsoFoam")).read()
 dts = [float(x) for x in re.findall(r"^deltaT = (\S+)", log, re.M)]
 macro("amrDeltaT", f"{float(np.median(dts)):.2g}")
+deltaT0 = float(re.search(r"^deltaT\s+(\S+);", open(os.path.join(TESTS, "movingMesh", "amr", "system",
+                                                                  "controlDict")).read(), re.M).group(1))
+macro("amrDeltaTFirst", f"{deltaT0:.0e}".replace("e-0", "e-"))
 cells = [int(x) for x in re.findall(r"(?:Refined|Unrefined) from \d+ to (\d+) cells", log)]
 macro("amrCellsMax", str(max(cells)))
 macro("amrEndTime", fixed(float(re.findall(r"^Time = (\S+)", log, re.M)[-1]), 4))

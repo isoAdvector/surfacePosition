@@ -280,11 +280,15 @@ Test & What it checks & Processors \\
 \midrule
 \texttt{waveAccuracy} & accuracy against an exact wave & 1 and 4 \\
 \texttt{specialCases} & interfaces and lines on faces, edges, processor and cyclic patches & 1 and 8 \\
-\texttt{movingMesh} & line cells after adaptive refinement and mesh motion & 1 and 4 \\
+\texttt{movingMesh} & line cells after adaptive refinement and mesh motion & 1, \amrProcs{} and \motionProcs{} \\
 \texttt{largeTiming} & cost in a large case & \timingProcs \\
 \bottomrule
 \end{tabular}
 \end{center}
+Each test has a \texttt{baseCase}, which, like every case, has an
+\texttt{Allrun} (serial, or \texttt{-parallel}) and an \texttt{Allclean}.
+The test's \texttt{Allrun} copies it, sets the parameters of each copy and
+runs the copy with its \texttt{Allrun}.
 \texttt{largeTiming} runs on the last \timingProcs{} cores, bound one process
 per core with local memory through an Open~MPI rank file, while the other
 tests run on the remaining cores. The suite passes if the checks of
@@ -432,19 +436,24 @@ of the mesh diagonal around the location, does not reach the mesh.
 \subsection{Moving meshes}
 \label{sec:moving}
 
-A 2D standing wave (amplitude \SI{0.05}{m}) in a closed unit box with a
-$20\times20$ mesh, one cell thick in $y$, is run with \texttt{interIsoFoam}
-in two variants,
-in serial and on 4 processors:
+A standing wave (amplitude \SI{0.05}{m}) in a closed unit box with
+$20\times20$ cells in $x$ and $z$ is run with \texttt{interIsoFoam} in two
+cases, each in serial and in parallel:
 \begin{description}
 \item[amr] adaptive refinement of the interface cells to two levels at every
-  time step with \texttt{dynamicRefineFvMesh}, for \amrSteps{} time steps. The
-  refinement also splits the cells in $y$, so that the seven lines, which lie
-  in the plane $y = 0$, run in the internal faces of the refined cells
-  (fig.~\ref{fig:amr}).
-\item[motion] a solid body oscillation of the whole mesh in $x$,
-  $\SI{0.05}{m}\,\sin(5.3\,t)$, for \SI{0.6}{s}, with the lines fixed in
-  space, so that the line cells change at every time step.
+  time step with \texttt{dynamicRefineFvMesh}, for \amrSteps{} time steps, on
+  \amrProcs{} processors in parallel. The refinement splits cells in all three
+  directions, so the case is 3D: \SI{0.1}{m} wide with two cells in $y$ and
+  symmetry planes at front and back. The seven lines lie in the plane $y = 0$
+  between the two cell layers, in internal faces at every refinement level
+  (fig.~\ref{fig:amr}). The interface is reconstructed with
+  \texttt{plicRDF}, which maps $\alpha$ to the refined cells;
+  \texttt{isoAlpha} does not. The first time step, \SI{\amrDeltaTFirst}{s},
+  keeps the Courant number of the start from rest below 0.5.
+\item[motion] a 2D case, one cell thick in $y$, with a solid body oscillation
+  of the whole mesh in $x$, $\SI{0.05}{m}\,\sin(5.3\,t)$, for \SI{0.6}{s},
+  on \motionProcs{} processors in parallel. The lines are fixed in space, so
+  that the line cells change at every time step.
 \end{description}
 
 \begin{figure}[!htbp]
@@ -466,7 +475,7 @@ in serial and on 4 processors:
   \end{subfigure}
   \caption{\texttt{movingMesh}. (a) Refined mesh, volume fraction, lines and
     the positions found by \sP{}. (b, c) Mesh coloured by
-    processor on 4 processors with line 3 (red): the mesh moves right, and
+    processor on \motionProcs{} processors with line 3 (red): the mesh moves right, and
     line 3 passes from the right to the left subdomains.}
   \label{fig:moving}
 \end{figure}
@@ -497,14 +506,28 @@ $t = 0.1$ and \SI{0.1125}{s} (fig.~\ref{fig:moving}); the flood fill follows
 it across the processor faces and finds all \motionCells{} line cells, as in
 serial.
 
-In the amr runs the refinement produces spurious velocities that limit the
-time step to about \SI{\amrDeltaT}{s} and throw up droplets. The heights of
-\sP{} and \iH{} still differ by at most \SI{\amrMaxDiff}{mm}, since both
-measure the liquid volume along the line; serial and parallel amr runs
-diverge (\iH{} differs by up to \SI{\amrParallelDiffIH}{mm}). In the motion
-runs, serial and parallel flows differ slightly, by up to
+In the serial amr run the heights of \sP{} and \iH{} differ by
+\SI{\amrRmsDiff}{mm} rms and at most \SI{\amrMaxDiff}{mm}. Many of the large
+differences are single time steps at which the height of \sP{} jumps by
+about one cell height of the finest level and back, which \iH{} does not
+show. These jumps also make up the largest difference between the serial and
+parallel amr runs: up to \SI{\amrParallelDiffSP}{mm} for \sP{}, against
+\SI{\amrParallelDiffIH}{mm} for \iH{}. The liquid volume changes by at most
+\amrVolumeChange{} of its initial value, and the median time step is
+\SI{\amrDeltaT}{s}. In the motion runs, serial and parallel differ slightly,
+by up to
 \SI{\motionParallelDiffIH}{mm} in \iH{} and \SI{\motionParallelDiffSP}{mm} in
 \sP{}.
+
+On 4 processors, the amr case loses liquid: at some of the time steps where
+cells are unrefined, whole cells of the finest level lose their liquid, and
+the time step becomes small. This was found in trial runs with both
+\texttt{plicRDF} and \texttt{isoAlpha}, with scotch and simple
+decompositions and with more buffer layers, and identically without any
+function objects, while the serial run and the run on 2 processors conserve
+the liquid. It is a fault of OpenFOAM's parallel unrefinement or of
+\texttt{interIsoFoam}'s mapping on it, and unrelated to \sP{}; the amr case
+is therefore run on \amrProcs{} processors.
 
 \subsection{Cost in a large case}
 \label{sec:cost}
@@ -567,11 +590,11 @@ with its own \texttt{PstreamBuffers} exchange, as
 \texttt{Pstream::listGatherValues} gathers lists of lists only from v2406,
 and has \texttt{fileFormats} on its include path, where \texttt{coordSet.H}
 is before v2206. The tests pass with \compatPassing. With
-\compatSolverOnly{}, \texttt{interIsoFoam} crashes (a floating point
-exception in \texttt{fvc::reconstruct} with adaptive refinement) or diverges
-(with the moving mesh in parallel) in the \texttt{movingMesh} cases, in the
-same way when they are run without function objects; these are faults of the
-solver in these versions, not of \sP{}. Other failures: \compatOther. The
+\compatSolverOnly{}, \texttt{interIsoFoam} fails in the
+\texttt{movingMesh} cases of table~\ref{tab:compat} (the parallel motion run
+diverges, with the time step going to zero) in the same way when they are
+run without function objects; this is a fault of the solver in that version,
+not of \sP{}. Other failures: \compatOther. The
 installations of \compatSerialOnly{} were built with an Open MPI that is no
 longer on this machine; they run, and were tested, only in serial.
 
@@ -602,8 +625,8 @@ and fixed:
   $|a| \le 10^{-300}|\mathbf{S}_f|$. For the lines in the face planes $y = 0$
   of the refined cells, round-off gave $|a|/|\mathbf{S}_f| \approx 10^{-17}$,
   so $b/a$ became an arbitrary distance that could clip a crossed cell away
-  and disconnect the flood fill. In a separate run of the serial amr case with
-  the old test, all of its \amrRebuilds{} mesh changes missed line cells; with
+  and disconnect the flood fill. In a separate run of the serial amr case
+  (then 2D) with the old test, every mesh change missed line cells; with
   eq.~\eqref{eq:parallel} none does.
 \item \emph{Lines lost across processor boundaries.} The flood fill followed
   internal faces only. When the motion moved line 3 into the neighbouring
@@ -622,6 +645,14 @@ section~\ref{sec:heights} removes this. The area vector of the isosurface from
 \texttt{surfaceIteratorIso}, documented to point from high to low values, gave
 the liquid on the wrong side in the flat test, so the liquid side is taken
 from the centre of the submerged part of the cell instead.
+
+The amr case was first set up in 2D, one cell thick. The refinement then
+also split the cells in $y$, and together with \texttt{isoAlpha}, which
+leaves $\alpha$ of the refined cells unmapped, this gave large spurious
+velocities that limited the time step, and heights of \sP{} and \iH{}
+differing by several centimetres. The 3D setup with \texttt{plicRDF} of
+section~\ref{sec:moving} removes both. On 4 processors, OpenFOAM loses
+liquid in the amr case (section~\ref{sec:moving}), unrelated to \sP{}.
 
 The tests also show that \iH{} (v2512) is wrong on processor faces and edges,
 on cyclic patches, and for locations outside the vertical extent of the mesh
