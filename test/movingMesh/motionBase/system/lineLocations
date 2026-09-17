@@ -1,0 +1,12 @@
+// Vertical sampling lines in the plane y = 0, off the faces of the 20x20
+// mesh, and inside the domain for all positions of the oscillating mesh
+lineLocations
+(
+    (0.126 0 0.5)
+    (0.266 0 0.5)
+    (0.406 0 0.5)
+    (0.526 0 0.5)
+    (0.666 0 0.5)
+    (0.786 0 0.5)
+    (0.926 0 0.5)
+);

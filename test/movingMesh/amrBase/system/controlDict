@@ -1,0 +1,87 @@
+/*--------------------------------*- C++ -*----------------------------------*\
+  =========                 |
+  \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox
+   \\    /   O peration     |
+    \\  /    A nd           | www.openfoam.com
+     \\/     M anipulation  |
+\*---------------------------------------------------------------------------*/
+FoamFile
+{
+    version     2.0;
+    format      ascii;
+    class       dictionary;
+    location    "system";
+    object      controlDict;
+}
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+
+application     interIsoFoam;
+
+startFrom       startTime;
+
+startTime       0;
+
+// A fixed number of time steps (400), with the mesh changing at most of
+// them; the fields are written at the end. The first time step is small, so
+// that the start from rest gives Co < 0.5.
+stopAt          nextWrite;
+
+endTime         0.6;
+
+deltaT          1e-5;
+
+writeControl    timeStep;
+
+writeInterval   400;
+
+purgeWrite      0;
+
+writeFormat     binary;
+
+writePrecision  12;
+
+writeCompression off;
+
+timeFormat      general;
+
+timePrecision   8;
+
+runTimeModifiable no;
+
+adjustTimeStep  yes;
+
+maxCo           0.5;
+
+maxAlphaCo      0.5;
+
+maxDeltaT       1;
+
+#include "lineLocations"
+
+functions
+{
+    surfacePosition1
+    {
+        type            surfacePosition;
+        libs            (surfacePosition);
+        locations       $lineLocations;
+        alpha           alpha.water;
+        direction       (0 0 -1);
+        checkLineCells  true;
+        writeControl    timeStep;
+        writeInterval   1;
+    }
+
+    interfaceHeight1
+    {
+        type            interfaceHeight;
+        libs            (fieldFunctionObjects);
+        locations       $lineLocations;
+        alpha           alpha.water;
+        direction       (0 0 -1);
+        writeControl    timeStep;
+        writeInterval   1;
+    }
+}
+
+// ************************************************************************* //

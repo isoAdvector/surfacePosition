@@ -18,9 +18,9 @@ FoamFile
 // Fixed time step; the step count, not the simulated time, matters for the
 // timing. All function objects run in the same run, and profiling gives the
 // time of each; the profiling is written with the fields, every writeInterval
-// steps, so that the first steps (line search) can be left out. endTime and
-// writeInterval are set by ../Allrun, and system/lineLocations is written by
-// ../makeLines.py.
+// steps, so that the first steps (line search) can be left out: 5 + 10 steps
+// here; ../Allrun sets endTime and writeInterval from NSKIP and NSTEPS.
+// system/lineLocations is written by ../makeLines.py.
 
 application     interIsoFoam;
 

@@ -2,7 +2,6 @@
 # Copyright (C) 2026 Johan Roenby
 # SPDX-License-Identifier: GPL-3.0-or-later
 cd "${0%/*}" || exit 1
-. ${WM_PROJECT_DIR:?}/bin/tools/RunFunctions        # Tutorial run functions
 #------------------------------------------------------------------------------
 # Accuracy of surfacePosition against interfaceHeight for the exact stream
 # function wave on coarse periodic wave flume meshes, in serial and parallel.
@@ -10,28 +9,11 @@ cd "${0%/*}" || exit 1
 # coded function object writes the exact surface elevation at the lines. The
 # time step only sets the number of samples (40 over the wave period). The
 # coded function object is compiled in the first case and reused in the others.
+# The cases are copies of baseCase, run with its Allrun.
 #
 # Needs streamFunFoam and libstreamFunctionWaveFvPatchField from the
-# streamFunctionWave repository, found next to this repository or next to any
-# directory above it (or set STREAMFUNCTIONWAVE_SRC to its
-# src/streamFunctionWave directory).
+# streamFunctionWave repository (see baseCase/Allrun).
 #------------------------------------------------------------------------------
-
-if [ -z "$STREAMFUNCTIONWAVE_SRC" ]
-then
-    dir=$(pwd)
-    while [ "$dir" != / ]
-    do
-        dir=$(dirname "$dir")
-        if [ -f "$dir/streamFunctionWave/src/streamFunctionWave/streamFunctionWave.H" ]
-        then
-            STREAMFUNCTIONWAVE_SRC="$dir/streamFunctionWave/src/streamFunctionWave"
-            break
-        fi
-    done
-fi
-export STREAMFUNCTIONWAVE_SRC
-[ -f "$STREAMFUNCTIONWAVE_SRC/streamFunctionWave.H" ] || { echo "streamFunctionWave.H not found; set STREAMFUNCTIONWAVE_SRC" >&2; exit 1; }
 
 # name nx nz
 cases="coarse 38 8
@@ -41,28 +23,19 @@ while read -r name nx nz
 do
     rm -rf "$name" "${name}_parallel"
     cp -r baseCase "$name"
-    [ -d coarse/dynamicCode ] && cp -r coarse/dynamicCode "$name"
     # Plain text edit: foamDictionary would write the blocks with $nx expanded
     sed -i "s/^nx .*/nx $nx;/; s/^nz .*/nz $nz;/" "$name/system/blockMeshDict"
-    python3 makeLines.py "$name"
-
-    (
-        cd "$name" || exit 1
-        cp -r 0.orig 0
-        runApplication blockMesh
-        runApplication streamFunFoam
-    )
-
     cp -r "$name" "${name}_parallel"
-    (
-        cd "${name}_parallel" || exit 1
-        rm -rf postProcessing log.streamFunFoam 0
-        cp -r 0.orig 0
-        runApplication decomposePar -cellDist
-        runParallel streamFunFoam
-    )
+
+    # The coded function object compiled in the first case
+    [ -d coarse/dynamicCode ] && cp -r coarse/dynamicCode "$name"
+    "$name/Allrun"
+
+    cp -r "$name/dynamicCode" "${name}_parallel" 2>/dev/null
+    "${name}_parallel/Allrun" -parallel
 done <<< "$cases"
 
 python3 compare.py coarse medium | tee log.compare
+exit "${PIPESTATUS[0]}"
 
 #------------------------------------------------------------------------------

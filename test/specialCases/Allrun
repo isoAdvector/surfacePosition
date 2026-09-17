@@ -2,13 +2,13 @@
 # Copyright (C) 2026 Johan Roenby
 # SPDX-License-Identifier: GPL-3.0-or-later
 cd "${0%/*}" || exit 1
-. ${WM_PROJECT_DIR:?}/bin/tools/RunFunctions        # Tutorial run functions
 #------------------------------------------------------------------------------
 # Special cases for surfacePosition: interfaces and lines on faces, edges and
 # points of the mesh, on processor and cyclic faces, and line locations
 # outside the mesh. One short interIsoFoam step per scenario, in serial and
 # on 8 processors (only serial if SERIAL_ONLY is set), checked against the
-# exact positions by check.py.
+# exact positions by check.py. The cases are copies of baseCase, run with
+# its Allrun.
 #------------------------------------------------------------------------------
 
 # name origin normal (water on the side the normal points to); layers adds a
@@ -25,27 +25,14 @@ do
     names="$names $name"
     rm -rf "$name" "${name}_parallel"
     cp -r baseCase "$name"
-    sed -i "s/ORIGIN/$ox $oy $oz/; s/NORMAL/$nx $ny $nz/" "$name/system/setAlphaFieldDict"
+    sed -i "s/^origin .*/origin          $ox $oy $oz;/; s/^normal .*/normal          $nx $ny $nz;/" "$name/system/setAlphaFieldDict"
 
-    (
-        cd "$name" || exit 1
-        cp -r 0.orig 0
-        runApplication blockMesh
-        runApplication setAlphaField
-        if [ "$name" = layers ]
-        then
-            python3 ../addLayer.py || exit 1
-        fi
-    )
+    [ "$name" = layers ] && cp addLayer.py "$name/"
 
     [ -n "$SERIAL_ONLY" ] || cp -r "$name" "${name}_parallel"
 
-    ( cd "$name" && runApplication interIsoFoam )
-    [ -n "$SERIAL_ONLY" ] || (
-        cd "${name}_parallel" || exit 1
-        runApplication decomposePar -cellDist
-        runParallel interIsoFoam
-    )
+    "$name/Allrun"
+    [ -n "$SERIAL_ONLY" ] || "${name}_parallel/Allrun" -parallel
 done <<< "$scenarios"
 
 python3 check.py $names | tee log.check

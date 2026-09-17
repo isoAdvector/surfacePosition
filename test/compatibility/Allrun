@@ -13,9 +13,10 @@ cd "${0%/*}" || exit 1
 #     fileFormats on the include path to list the remaining errors.
 #   - do the specialCases and movingMesh tests pass with that library (in
 #     serial and parallel, or only in serial without a working MPI)? The
-#     cases of a failed test whose solver did not finish are run again
-#     without function objects (withoutFunctionObjects.py), to see whether
-#     the failure is the solver's.
+#     cases of a failed test whose solver did not finish are cleaned and run
+#     again with their Allrun without function objects
+#     (withoutFunctionObjects.py), to see whether the failure is the
+#     solver's.
 # The versions are tested at the same time, in groups on 8 cores each.
 # Writes log.compatibility and results.json (summarise.py).
 #
@@ -121,32 +122,30 @@ check()
         echo $status > "$w/$t/status"
         [ $status = 0 ] && continue
 
-        # Cases whose solver did not finish, again without function objects
-        local c name nProcs app
+        # Cases whose solver did not finish, again without function objects:
+        # a cleaned copy run with its Allrun
+        local c name app parallel
         for c in "$w/$t"/*/
         do
             name=$(basename "$c")
-            [ -f "$c/system/controlDict" ] && [ "$name" != baseCase ] || continue
+            [ -x "$c/Allrun" ] || continue
+            case "$name" in baseCase|*Base) continue ;; esac
             app=$(sed -n 's/^application *\([^;]*\);.*/\1/p' "$c/system/controlDict")
             [ -f "$c/log.$app" ] && ! grep -q "^End" "$c/log.$app" || continue
 
-            cp -r "$c" "$w/$t/withoutFO/$name" 2>/dev/null \
-             || { mkdir -p "$w/$t/withoutFO" && cp -r "$c" "$w/$t/withoutFO/$name"; }
+            parallel=""
+            ls -d "$c"/processor* > /dev/null 2>&1 && parallel=-parallel
+            mkdir -p "$w/$t/withoutFO"
+            cp -r "$c" "$w/$t/withoutFO/$name"
+            "$w/$t/withoutFO/$name/Allclean" > /dev/null 2>&1
             python3 withoutFunctionObjects.py "$w/$t/withoutFO/$name"
-            nProcs=$(ls -d "$c"/processor* 2>/dev/null | wc -l)
 
             bash -c "source $d/etc/bashrc $mplib >/dev/null 2>&1
                 export OMPI_MCA_hwloc_base_binding_policy=none
-                cd $w/$t/withoutFO/$name || exit 1
-                if [ $nProcs -gt 0 ]
-                then
-                    timeout --kill-after=10 $timeLimit taskset -c $cores \
-                        mpirun -np $nProcs $app -parallel > log.$app 2>&1
-                else
-                    timeout --kill-after=10 $timeLimit taskset -c $cores \
-                        $app > log.$app 2>&1
-                fi"
-            if grep -q "^End" "$w/$t/withoutFO/$name/log.$app"
+                timeout --kill-after=10 $timeLimit taskset -c $cores \
+                    $w/$t/withoutFO/$name/Allrun $parallel" \
+                > "$w/$t/withoutFO/$name/log.Allrun" 2>&1
+            if grep -q "^End" "$w/$t/withoutFO/$name/log.$app" 2>/dev/null
             then
                 echo "$name finishes" >> "$w/$t/withoutFO/result"
             else

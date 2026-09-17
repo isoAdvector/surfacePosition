@@ -1,0 +1,29 @@
+/*--------------------------------*- C++ -*----------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2512                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+FoamFile
+{
+    version         2;
+    format          ascii;
+    class           dictionary;
+    object          decomposeParDict;
+}
+
+// 2 processors: on 4, OpenFOAM's parallel unrefinement loses water (see
+// the report); this is unrelated to surfacePosition
+numberOfSubdomains 2;
+
+method          scotch;
+
+coeffs
+{
+    n               ( 2 1 2 );
+}
+
+
+// ************************************************************************* //

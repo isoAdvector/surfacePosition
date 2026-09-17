@@ -2,62 +2,25 @@
 # Copyright (C) 2026 Johan Roenby
 # SPDX-License-Identifier: GPL-3.0-or-later
 cd "${0%/*}" || exit 1
-. ${WM_PROJECT_DIR:?}/bin/tools/RunFunctions        # Tutorial run functions
 #------------------------------------------------------------------------------
-# surfacePosition on changing meshes: a 2D standing wave with adaptive mesh
-# refinement (amr) and with a solid body oscillation of the mesh (motion),
-# each in serial and parallel (only serial if SERIAL_ONLY is set), compared
-# with interfaceHeight. checkLineCells
-# compares the line cells after every rebuild with a full search.
+# surfacePosition on changing meshes: a standing wave with adaptive mesh
+# refinement (amrBase) and with a solid body oscillation of the mesh
+# (motionBase), each copied and run with its Allrun in serial and parallel at
+# the same time (only serial if SERIAL_ONLY is set), and compared with
+# interfaceHeight by compare.py. checkLineCells compares the line cells after
+# every rebuild with a full search.
 #------------------------------------------------------------------------------
-
-nProcs=${NPROCS:-4}
-nStepsAmr=${NSTEPS_AMR:-400}
 
 for name in amr motion
 do
     rm -rf "$name" "${name}_parallel"
-    cp -r baseCase "$name"
-    cp "$name/constant/dynamicMeshDict.$name" "$name/constant/dynamicMeshDict"
-
-    # Refinement at the interface makes the time steps small (spurious
-    # currents): a fixed number of steps for amr, which changes the mesh at
-    # most steps (some 180 rebuilds). The fields are written at the end.
-    if [ "$name" = amr ]
-    then
-        sed -i "s/^stopAt .*/stopAt          nextWrite;/;
-                s/^writeControl .*/writeControl    timeStep;/;
-                s/^writeInterval .*/writeInterval   $nStepsAmr;/" \
-            "$name/system/controlDict"
-    fi
-
-    (
-        cd "$name" || exit 1
-        cp -r 0.orig 0
-        runApplication blockMesh
-        runApplication setAlphaField
-    )
-
-    app=$(foamDictionary -entry application -value "$name/system/controlDict")
-
-    # Serial and parallel (unless SERIAL_ONLY is set) at the same time
+    cp -r "${name}Base" "$name"
     if [ -z "$SERIAL_ONLY" ]
     then
-        cp -r "$name" "${name}_parallel"
-        foamDictionary -entry numberOfSubdomains -set "$nProcs" \
-            "${name}_parallel/system/decomposeParDict" > /dev/null
+        cp -r "${name}Base" "${name}_parallel"
+        "${name}_parallel/Allrun" -parallel &
     fi
-
-    ( cd "$name" && runApplication "$app" ) &
-
-    if [ -z "$SERIAL_ONLY" ]
-    then
-        (
-            cd "${name}_parallel" || exit 1
-            runApplication decomposePar -cellDist
-            runParallel "$app"
-        )
-    fi
+    "$name/Allrun"
     wait
 done
 

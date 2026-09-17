@@ -2,36 +2,16 @@
 # Copyright (C) 2026 Johan Roenby
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# Prepares a copy of a case to be run again without function objects: removes
-# the functions of system/controlDict, the time directories after 0 (also of
-# the processor directories), postProcessing and the solver log.
+# Removes the function objects of a case: empties the functions of
+# system/controlDict.
 #
 # Usage: withoutFunctionObjects.py <caseDir>
 
 import os
 import re
-import shutil
 import sys
 
 case = sys.argv[1]
-
-
-def is_later_time(name):
-    try:
-        return float(name) > 0
-    except ValueError:
-        return False
-
-
-for d in [case] + [os.path.join(case, p) for p in os.listdir(case) if p.startswith("processor")]:
-    for name in os.listdir(d):
-        if is_later_time(name):
-            shutil.rmtree(os.path.join(d, name))
-
-shutil.rmtree(os.path.join(case, "postProcessing"), ignore_errors=True)
-for name in os.listdir(case):
-    if name.startswith("log.") and name not in ("log.blockMesh", "log.setAlphaField", "log.decomposePar"):
-        os.remove(os.path.join(case, name))
 
 path = os.path.join(case, "system", "controlDict")
 text = open(path).read()

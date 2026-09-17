@@ -3,6 +3,8 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 cd "${0%/*}" || exit 1
 
+baseCase/Allclean > /dev/null
+
 rm -rf coarse coarse_parallel medium medium_parallel log.compare results.json
 
 #------------------------------------------------------------------------------

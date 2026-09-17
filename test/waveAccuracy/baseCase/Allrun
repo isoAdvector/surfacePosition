@@ -1,0 +1,37 @@
+#!/bin/sh
+# Copyright (C) 2026 Johan Roenby
+# SPDX-License-Identifier: GPL-3.0-or-later
+cd "${0%/*}" || exit 1
+. ${WM_PROJECT_DIR:?}/bin/tools/RunFunctions        # Tutorial run functions
+#------------------------------------------------------------------------------
+# The exact stream function wave in a periodic wave flume with the
+# surfacePosition and interfaceHeight function objects, in serial, or with
+# -parallel on the processors of system/decomposeParDict. streamFunFoam sets
+# the fields to the exact wave at every time step, and a coded function
+# object writes the exact surface elevation at the lines (written to
+# system/lineLocations by ../makeLines.py).
+#
+# Needs streamFunFoam and libstreamFunctionWaveFvPatchField from the
+# streamFunctionWave repository: set STREAMFUNCTIONWAVE_SRC to its
+# src/streamFunctionWave directory, or ../findStreamFunctionWave finds it.
+#
+# Usage: Allrun [-parallel]
+#------------------------------------------------------------------------------
+
+[ -n "$STREAMFUNCTIONWAVE_SRC" ] \
+ || STREAMFUNCTIONWAVE_SRC=$(../findStreamFunctionWave) || exit 1
+export STREAMFUNCTIONWAVE_SRC
+
+python3 ../makeLines.py . > log.makeLines 2>&1 || exit 1
+restore0Dir
+runApplication blockMesh
+
+if isParallel "$@"
+then
+    runApplication decomposePar -cellDist
+    runParallel $(getApplication)
+else
+    runApplication $(getApplication)
+fi
+
+#------------------------------------------------------------------------------

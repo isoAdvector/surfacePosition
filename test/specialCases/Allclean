@@ -3,6 +3,8 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 cd "${0%/*}" || exit 1
 
+baseCase/Allclean > /dev/null
+
 rm -rf flat537* flat500* flat300* slab slab_parallel layers layers_parallel log.check results.json
 
 #------------------------------------------------------------------------------

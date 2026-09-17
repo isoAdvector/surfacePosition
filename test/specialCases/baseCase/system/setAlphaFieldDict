@@ -16,11 +16,11 @@ FoamFile
 // * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
 
 // Plane interface with the water on the side the normal points to.
-// ORIGIN and NORMAL are set by ../Allrun.
+// origin and normal are set per scenario by ../Allrun.
 
 field           alpha.water;
 type            plane;
-origin          ORIGIN;
-normal          NORMAL;
+origin          (0 0 0.537);
+normal          (0 0 -1);
 
 // ************************************************************************* //

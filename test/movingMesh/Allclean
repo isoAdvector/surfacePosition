@@ -3,6 +3,9 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 cd "${0%/*}" || exit 1
 
+amrBase/Allclean > /dev/null
+motionBase/Allclean > /dev/null
+
 rm -rf amr amr_parallel motion motion_parallel log.compare results.json
 
 #------------------------------------------------------------------------------

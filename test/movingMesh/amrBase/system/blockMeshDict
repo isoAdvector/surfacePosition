@@ -19,9 +19,12 @@ scale   1;
 L   1;
 nx  20;
 
-y1  -.005;
-y2  .005;
-ny  1;
+// 3D with 2 cells across: dynamicRefineFvMesh refines in all three
+// directions. The lines at y = 0 lie on the internal faces between the two
+// cell layers.
+y1  -0.05;
+y2  0.05;
+ny  2;
 
 H   1;
 nz  20;
@@ -83,7 +86,7 @@ boundary
     }
     front
     {
-        type empty;
+        type symmetryPlane;
         faces
         (
             (0 1 5 4)
@@ -91,7 +94,7 @@ boundary
     }
     back
     {
-        type empty;
+        type symmetryPlane;
         faces
         (
             (2 3 7 6)
