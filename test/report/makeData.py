@@ -276,16 +276,52 @@ REASONS = [
     ("DynamicList has no member", r"no \texttt{DynamicList::push\_back}"),
     ("PstreamBuffers::PstreamBuffers()", r"no default \texttt{PstreamBuffers}"),
     ("listGatherValues", r"no \texttt{Pstream::listGatherValues}"),
-    ("non-contiguous", r"\texttt{listGatherValues} only for contiguous types"),
 ]
 
 
-def reasons(messages):
-    out = []
-    for key, text in REASONS:
-        if any(key in m for m in messages) and text not in out:
-            out.append(text)
-    return out
+def compile_reasons(messages):
+    return [text for key, text in REASONS if any(key in m for m in messages)]
+
+
+def tt(name):
+    """A case name as code"""
+    return r"\texttt{" + name.replace("_", r"\_") + "}"
+
+
+def test_reason(test, t):
+    """Reason of a failed test, and whether the failure is also there
+    without function objects (None if not checked)"""
+    error = t["error"] or "failed"
+    case = error.split(":")[0] if ":" in error else ""
+    if "floating point exception" in error:
+        what = f"{tt(case)}: solver crash (floating point exception)"
+    elif "time limit" in error:
+        what = "time limit reached"
+    else:
+        what = error
+    without = t.get("withoutFunctionObjects", [])
+    if without:
+        failing = [line.split()[0] for line in without if line.endswith("fails")]
+        finishing = [line.split()[0] for line in without if line.endswith("finishes")]
+        if failing:
+            what += "; also without function objects: " + ", ".join(map(tt, failing))
+        if finishing:
+            what += "; not without function objects: " + ", ".join(map(tt, finishing))
+        return what, not finishing
+    return what, None
+
+
+def ranges(versions, subset):
+    """Consecutive runs of versions in subset, as 'v2006--v2106, v2306'"""
+    out, run = [], []
+    for v in versions + [None]:
+        if v is not None and v in subset:
+            run.append(v)
+            continue
+        if run:
+            out.append(run[0] if len(run) == 1 else f"{run[0]}--{run[-1]}")
+            run = []
+    return ", ".join(out) if out else "none"
 
 
 compatPath = os.path.join(TESTS, "compatibility", "results.json")
@@ -293,37 +329,47 @@ if os.path.isfile(compatPath):
     compat = json.load(open(compatPath))
     versions = sorted(compat)
     rows = []
-    lastAffected = {}
+    passing, solverOnly, other, compiling = [], [], [], []
     for v in versions:
         r = compat[v]
-        messages = r["errors"] + r.get("errorsWithFileFormats", []) \
-            + [t["error"] for t in r["tests"].values() if t["error"]]
-        why = reasons(messages)
-        for key, text in REASONS[:-1]:     # compile errors only
-            if any(key in m for m in r["errors"] + r.get("errorsWithFileFormats", [])):
-                lastAffected[text] = v
+        why = compile_reasons(r["errors"])
+        serial = r["state"] == "serial only"
+        tests, solver = [], []
+        for name in ("specialCases", "movingMesh"):
+            t = r["tests"].get(name)
+            if t is None:
+                tests.append("--")
+                continue
+            tests.append(("passed" if t["passed"] else r"\textbf{failed}") + (" (serial)" if serial else ""))
+            if not t["passed"]:
+                what, same = test_reason(name, t)
+                why.append(what)
+                solver.append(bool(same))
         comp = "--" if r["compiled"] is None else ("yes" if r["compiled"] else "no")
-        tests = []
-        for t in ("specialCases", "movingMesh"):
-            tests.append(("passed" if r["tests"][t]["passed"] else r"\textbf{failed}")
-                         if t in r["tests"] else "--")
         rows.append([v, r["state"], comp] + tests + ["; ".join(why)])
+        if r["compiled"]:
+            compiling.append(v)
+        if r["compiled"] and r["tests"] and all(t["passed"] for t in r["tests"].values()):
+            passing.append(v)
+        elif solver and all(solver):
+            solverOnly.append(v)
+        elif r["compiled"] is not None:
+            other.append(v)
     table("tabCompat", rows, 6)
 
-    passing = [v for v in versions
-               if compat[v]["compiled"] and compat[v]["tests"]
-               and all(t["passed"] for t in compat[v]["tests"].values())]
-    macro("compatFirst", passing[0] if passing else "--")
-    macro("compatLast", passing[-1] if passing else "--")
     macro("compatOldest", versions[0])
     macro("compatNewest", versions[-1])
-    macro("compatSerialOnly", ", ".join(v for v in versions if compat[v]["state"] == "serial only") or "none")
-    macro("compatObstacles", "; ".join(f"{text} (up to {v})" for text, v in lastAffected.items()))
+    macro("compatCompiling", ranges(versions, compiling))
+    macro("compatFirst", compiling[0] if compiling else "--")
+    macro("compatPassing", ranges(versions, passing))
+    macro("compatSolverOnly", ranges(versions, solverOnly))
+    macro("compatOther", ranges(versions, other))
+    macro("compatSerialOnly", ranges(versions, [v for v in versions if compat[v]["state"] == "serial only"]))
     stamp = time.strftime("%Y-%m-%d", time.localtime(os.path.getmtime(compatPath)))
     macro("compatDate", stamp)
 else:
-    for name in ("compatFirst", "compatLast", "compatOldest", "compatNewest",
-                 "compatSerialOnly", "compatObstacles", "compatDate"):
+    for name in ("compatOldest", "compatNewest", "compatCompiling", "compatFirst", "compatPassing",
+                 "compatSolverOnly", "compatOther", "compatSerialOnly", "compatDate"):
         macro(name, "--")
     table("tabCompat", [["--", "not run", "--", "--", "--", ""]], 6)
 

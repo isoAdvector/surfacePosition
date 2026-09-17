@@ -24,7 +24,7 @@ This README is a Markdown version of the report
 test suite in [test](test). All numbers, tables and figures are generated from
 the output of one run of the suite (wall time 1 min 44 s). In a
 1 000 000-cell case on 18 processors, `surfacePosition` costs
-4.4 ms per time step for 50 lines, against 1241 ms
+5.2 ms per time step for 50 lines, against 1264 ms
 for `interfaceHeight`; on the exact stream function wave it is more accurate
 than `interfaceHeight` on the same mesh, and it is exact for flat interfaces,
 also on faces and processor boundaries.
@@ -43,7 +43,7 @@ also on faces and processor boundaries.
 `surfacePosition` is built into the library `libsurfacePosition` by
 `./Allwmake` (with OpenFOAM v2512 sourced). It links OpenFOAM's
 `finiteVolume`, `meshTools`, `sampling`, `lagrangian` and `geometricVoF`
-libraries. It needs OpenFOAM.com v2406 or later
+libraries. It compiles with OpenFOAM.com v2006 and later
 ([section 3.5](#35-compatibility-with-openfoam-versions)). Its entries and
 output are those of `interfaceHeight`, so that a
 dictionary of `interfaceHeight` works after changing its `type` and `libs`, and
@@ -416,15 +416,15 @@ of the first steps beyond the steady cost (the line search), in ms.*
 
 | | per step | per line | range | start-up |
 |---|---:|---:|---:|---:|
-| flow solution (`interIsoFoam`) | 893.2 |  | 1.24 |  |
-| `surfacePosition` | 4.4 | 0.087 | 1.41 | 1139 |
-| `interfaceHeight` | 1241.2 | 24.823 | 0.66 |  |
+| flow solution (`interIsoFoam`) | 730.5 |  | 2.22 |  |
+| `surfacePosition` | 5.2 | 0.104 | 1.89 | 1147 |
+| `interfaceHeight` | 1264.4 | 25.287 | 0.37 |  |
 
-`surfacePosition` costs 4.4 ms per step, 0.5 % of the
+`surfacePosition` costs 5.2 ms per step, 0.7 % of the
 flow solution, including the interpolation of α to the mesh points, while
-`interfaceHeight` costs 1241 ms, 139 % of the flow
-solution and 284 times as much as `surfacePosition` (table 5). The
-initial line search of `surfacePosition` takes about 1139 ms once.
+`interfaceHeight` costs 1264 ms, 173 % of the flow
+solution and 244 times as much as `surfacePosition` (table 5). The
+initial line search of `surfacePosition` takes about 1147 ms once.
 The heights of `surfacePosition` and `interfaceHeight` agree to
 0.123 mm (rms 0.026 mm).
 
@@ -432,19 +432,24 @@ The heights of `surfacePosition` and `interfaceHeight` agree to
 
 `test/compatibility/Allrun` (not part of `test/Allrun`) builds
 `surfacePosition` with each installed OpenFOAM.com version that has
-`geometricVoF` (v2006 to v2606 here) and, where it
-compiles and the version runs in parallel, runs the `specialCases` and
-`movingMesh` tests with that library. Table 6 shows the result of its run on
-2026-09-17. `surfacePosition` compiles and passes these tests with
-v2406 to v2606. The older versions differ in their
-application programming interface: `coordSet.H` in `fileFormats` (up to v2112); no `DynamicList::push_back` (up to v2206); no default `PstreamBuffers` (up to v2212); no `Pstream::listGatherValues` (up to v2106). With v2306 and v2312,
-`surfacePosition` compiles, but `Pstream::listGatherValues` there only gathers
-contiguous types, and the gathering of the liquid parts aborts at the first
-write. These are small differences, which could be bridged (with `append`,
-`last` and `remove`, an explicit communication type, a gather with
-`PstreamBuffers`, and the `fileFormats` include); this was not tried. The
-installations of v2006, v2012, v2106 were built with an Open MPI that is no
-longer on this machine, and run only in serial.
+`geometricVoF` (v2006 to v2606 here) and runs the
+`specialCases` and `movingMesh` tests with that library. The cases of a failed
+test whose solver did not finish are run again without function objects.
+Table 6 shows the result of its run on 2026-09-17.
+
+`surfacePosition` compiles with v2006–v2606. For this, it appends to
+lists with `append` before v2212 and `push_back` from v2212 (chosen with the
+`OPENFOAM` version macro), gathers the liquid parts on the master with its own
+`PstreamBuffers` exchange, as `Pstream::listGatherValues` gathers lists of
+lists only from v2406, and has `fileFormats` on its include path, where
+`coordSet.H` is before v2206. The tests pass with v2006–v2106, v2306–v2606. With
+v2112–v2212, `interIsoFoam` crashes (a floating point exception in
+`fvc::reconstruct` with adaptive refinement) or diverges (with the moving mesh
+in parallel) in the `movingMesh` cases, in the same way when they are run
+without function objects; these are faults of the solver in these versions, not
+of `surfacePosition`. Other failures: none. The installations of
+v2006–v2106 were built with an Open MPI that is no longer on this
+machine; they run, and were tested, only in serial.
 
 *Table 6: Compatibility of `surfacePosition` with the installed OpenFOAM.com
 versions: whether the installation runs, whether `surfacePosition` compiles,
@@ -452,14 +457,14 @@ the tests with it, and the reasons for failures.*
 
 | Version | Installation | Compiles | `specialCases` | `movingMesh` | Reason |
 |---|---|---|---|---|---|
-| v2006 | serial only | no | – | – | `coordSet.H` in `fileFormats`; no `DynamicList::push_back`; no default `PstreamBuffers`; no `Pstream::listGatherValues` |
-| v2012 | serial only | no | – | – | `coordSet.H` in `fileFormats`; no `DynamicList::push_back`; no default `PstreamBuffers`; no `Pstream::listGatherValues` |
-| v2106 | serial only | no | – | – | `coordSet.H` in `fileFormats`; no `DynamicList::push_back`; no default `PstreamBuffers`; no `Pstream::listGatherValues` |
-| v2112 | runs | no | – | – | `coordSet.H` in `fileFormats`; no `DynamicList::push_back`; no default `PstreamBuffers` |
-| v2206 | runs | no | – | – | no `DynamicList::push_back`; no default `PstreamBuffers` |
-| v2212 | runs | no | – | – | no default `PstreamBuffers` |
-| v2306 | runs | yes | **failed** | **failed** | `listGatherValues` only for contiguous types |
-| v2312 | runs | yes | **failed** | **failed** | `listGatherValues` only for contiguous types |
+| v2006 | serial only | yes | passed (serial) | passed (serial) |  |
+| v2012 | serial only | yes | passed (serial) | passed (serial) |  |
+| v2106 | serial only | yes | passed (serial) | passed (serial) |  |
+| v2112 | runs | yes | passed | **failed** | time limit reached; also without function objects: `amr_parallel`, `motion_parallel` |
+| v2206 | runs | yes | passed | **failed** | `amr`: solver crash (floating point exception); also without function objects: `amr`, `amr_parallel` |
+| v2212 | runs | yes | passed | **failed** | `amr`: solver crash (floating point exception); also without function objects: `amr`, `amr_parallel` |
+| v2306 | runs | yes | passed | passed |  |
+| v2312 | runs | yes | passed | passed |  |
 | v2406 | runs | yes | passed | passed |  |
 | v2412 | runs | yes | passed | passed |  |
 | v2506 | runs | yes | passed | passed |  |
@@ -516,13 +521,13 @@ cd report
 
 Section 3.5 needs `test/compatibility/Allrun` to have been run before
 `test/report/Allrun`; it builds and tests with every OpenFOAM.com installation
-found in `~/OpenFOAM` (or `FOAM_INSTALLS`) and takes about five minutes.
+found in `~/OpenFOAM` (or `FOAM_INSTALLS`) and takes about eight minutes.
 
 `makeData.py` writes the numbers and tables from the `results.json` files and
 the `postProcessing` data of the cases; `makeFigures.py` renders the figures
 from the case data with ParaView; `makeReadme.py` writes this README from
 `test/report/README.md.in`. The report and this README were generated from the
-run of 2026-09-17 12:30 (source and tests at revision `368abfc`).
+run of 2026-09-17 16:22 (source and tests at revision `772d91b`).
 
 ## License
 

@@ -70,8 +70,9 @@ also on faces and processor boundaries.
 \texttt{Allwmake} in its repository. It links OpenFOAM's \texttt{finiteVolume},
 \texttt{meshTools}, \texttt{sampling}, \texttt{lagrangian} and
 \texttt{geometricVoF} libraries, and is released, like OpenFOAM, under the
-GNU General Public License, version 3 or later. It needs OpenFOAM.com
-\compatFirst{} or later (section~\ref{sec:compat}). Its entries and output are those of \iH{}, so
+GNU General Public License, version 3 or later. It compiles with
+OpenFOAM.com \compatFirst{} and later (section~\ref{sec:compat}). Its
+entries and output are those of \iH{}, so
 that a dictionary of \iH{} works after changing its \texttt{type} and
 \texttt{libs}, and post-processing tools for \iH{} read its output:
 \begin{lstlisting}
@@ -513,20 +514,26 @@ solution and \timingRatio{} times as much as \sP{}
 
 \texttt{test/compatibility/Allrun} (not part of \texttt{test/Allrun}) builds
 \sP{} with each installed OpenFOAM.com version that has
-\texttt{geometricVoF} (\compatOldest{} to \compatNewest{} here) and, where it
-compiles and the version runs in parallel, runs the \texttt{specialCases} and
-\texttt{movingMesh} tests with that library. Table~\ref{tab:compat} shows the
-result of its run on \compatDate. \sP{} compiles and passes these tests with
-\compatFirst{} to \compatLast{}. The older versions differ in their
-application programming interface: \compatObstacles. With v2306 and v2312,
-\sP{} compiles, but \texttt{Pstream::listGatherValues} there only gathers
-contiguous types, and the gathering of the liquid parts aborts at the first
-write. These are small differences, which could be bridged (with
-\texttt{append}, \texttt{last} and \texttt{remove}, an explicit
-communication type, a gather with \texttt{PstreamBuffers}, and the
-\texttt{fileFormats} include); this was not tried. The installations of
-\compatSerialOnly{} were built with an Open MPI that is no longer on this
-machine, and run only in serial.
+\texttt{geometricVoF} (\compatOldest{} to \compatNewest{} here) and runs the
+\texttt{specialCases} and \texttt{movingMesh} tests with that library. The
+cases of a failed test whose solver did not finish are run again without
+function objects. Table~\ref{tab:compat} shows the result of its run on
+\compatDate.
+
+\sP{} compiles with \compatCompiling. For this, it appends to lists with
+\texttt{append} before v2212 and \texttt{push\_back} from v2212 (chosen with
+the \texttt{OPENFOAM} version macro), gathers the liquid parts on the master
+with its own \texttt{PstreamBuffers} exchange, as
+\texttt{Pstream::listGatherValues} gathers lists of lists only from v2406,
+and has \texttt{fileFormats} on its include path, where \texttt{coordSet.H}
+is before v2206. The tests pass with \compatPassing. With
+\compatSolverOnly{}, \texttt{interIsoFoam} crashes (a floating point
+exception in \texttt{fvc::reconstruct} with adaptive refinement) or diverges
+(with the moving mesh in parallel) in the \texttt{movingMesh} cases, in the
+same way when they are run without function objects; these are faults of the
+solver in these versions, not of \sP{}. Other failures: \compatOther. The
+installations of \compatSerialOnly{} were built with an Open MPI that is no
+longer on this machine; they run, and were tested, only in serial.
 
 \begin{table}[!htbp]
   \centering
@@ -535,7 +542,7 @@ machine, and run only in serial.
     it, and the reasons for failures.}
   \label{tab:compat}
   \small
-  \begin{tabular}{llccc>{\raggedright\arraybackslash}p{0.33\textwidth}}
+  \begin{tabular}{llccc>{\raggedright\arraybackslash}p{0.30\textwidth}}
     \toprule
     Version & Installation & Compiles & \texttt{specialCases} & \texttt{movingMesh} & Reason \\
     \midrule
