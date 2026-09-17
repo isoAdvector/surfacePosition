@@ -7,72 +7,75 @@
 
 *Johan Roenby*
 
-`surfacePosition` is an OpenFOAM (v2512) function object that reports where a
-volume-of-fluid interface crosses user-specified lines. It is an alternative to
-OpenFOAM's `interfaceHeight`, which integrates the volume fraction along a
-sampled line. `surfacePosition` finds the cells crossed by each line once and
-follows them through mesh changes by a flood fill, so its cost per write does
-not depend on the mesh size, and it computes the crossing geometrically from
-the interface plane in the cell.
+`surfacePosition` is an OpenFOAM (v2512) function object that reports the
+height and position of a volume-of-fluid interface at a set of locations, with
+the same entries and output as OpenFOAM's `interfaceHeight`, which integrates
+the interpolated volume fraction along a sampled line. `surfacePosition` finds
+the cells crossed by each line once and follows them through mesh changes by a
+flood fill, so its cost per write does not depend on the mesh size, and it sums
+the lengths of the line inside the liquid, cutting each interface cell
+geometrically with the isosurface of the volume fraction.
 
 This README is a Markdown version of the report
 [test/report/report.pdf](test/report/report.pdf) on the implementation and the
 test suite in [test](test). All numbers, tables and figures are generated from
-the output of one run of the suite (wall time 1 min 40 s). In a
+the output of one run of the suite (wall time 1 min 41 s). In a
 1 000 000-cell case on 18 processors, `surfacePosition` costs
-2.4 ms per time step for 50 lines, against 1278 ms
-for `interfaceHeight`, and on the exact stream function wave it is more
-accurate than `interfaceHeight` on the same mesh.
+5.6 ms per time step for 50 lines, against 1299 ms
+for `interfaceHeight`; on the exact stream function wave it is more accurate
+than `interfaceHeight` on the same mesh, and it is exact for flat interfaces,
+also on faces and processor boundaries.
 
 ## Contents
 
 1. [Usage](#1-usage)
 2. [Implementation](#2-implementation)
 3. [Test suite](#3-test-suite)
-4. [Defects found by the tests](#4-defects-found-by-the-tests)
+4. [Findings of the tests](#4-findings-of-the-tests)
 5. [Reproducing the tests and this README](#5-reproducing-the-tests-and-this-readme)
 
 ## 1. Usage
 
 `surfacePosition` is built into the library `libsurfacePosition` by
-`./Allwmake` (with OpenFOAM v2512 sourced). It links only OpenFOAM's
-`finiteVolume`, `meshTools`, `sampling` and `lagrangian` libraries. Lines are
-given either as locations and a direction, as for `interfaceHeight`, or as
-explicit start and end points:
+`./Allwmake` (with OpenFOAM v2512 sourced). It links OpenFOAM's
+`finiteVolume`, `meshTools`, `sampling`, `lagrangian` and `geometricVoF`
+libraries. Its entries and output are those of `interfaceHeight`, so that a
+dictionary of `interfaceHeight` works after changing its `type` and `libs`, and
+post-processing tools for `interfaceHeight` read its output:
 
 ```
 surfacePosition1
 {
     type            surfacePosition;
     libs            (surfacePosition);
-    locations       ((1.0001 0.0001 0.0001));
-    // or explicit lines: lines (((x0 y0 z0) (x1 y1 z1)));
-    direction       (0 0 1);        // optional, default -g
-    alpha           alpha.water;    // optional
-    method          auto;           // reconstructed, plic, alpha or auto
-    alphaTol        1e-8;           // optional
+    locations       ((0 0 0) (10 0 0) (20 0 0));
+    alpha           alpha.water;    // default alpha
+    liquid          true;           // alpha is the liquid's
+    direction       (0 0 -1);       // downwards, default gravity
+    surfCellTol     1e-8;           // interface cells
+    isoFaceTol      1e-8;           // tolerance of the isosurface cut
     checkLineCells  false;          // tests: compare line cells with all cells
     fullSearchInterval 0;           // full search every N mesh changes
-    writeControl    timeStep;
-    writeInterval   1;
 }
 ```
 
-The file `postProcessing/<name>/<time>/surfacePosition.dat` holds, per line,
-the distance $s$ from the line start, the height $h$ above the location
-(locations only) and the point $(x, y, z)$. A line without an interface is
-written as `nan`.
+The `interfaceHeight` entry `interpolationScheme` is not used. The files
+`height.dat` and `position.dat` in `postProcessing/<name>/<time>` hold, per
+location, the height $h_B$ of the liquid above the lower boundary, where the
+line leaves the mesh along the direction, the height $h_L = h_B - h_{LB}$ of the
+interface above the location, where $h_{LB}$ is the height of the location
+above the lower boundary, and the position of the interface, the location moved
+by $h_L$ against the direction. As in `interfaceHeight`, a dry line gives
+$h_B = 0$, and a line missing the mesh $h_B = 0$ and $h_L$ = GREAT (10¹⁵).
 
 ## 2. Implementation
 
 ### 2.1 Lines
 
-With locations, each line runs through the location along $-\mathbf{d}$, where
-$\mathbf{d}$ is the upward direction, from above the mesh to below it, across
-the bounding box of the mesh plus a margin of the box diagonal for mesh motion.
-This holds wherever the location is, also outside the mesh, and the first
-interface found from the start is the uppermost one. Explicit lines are used as
-given; the first interface from their start is reported.
+Through each location a line runs along the unit downward direction
+$\mathbf{t}$ (the `direction` entry, or gravity), from above the mesh to below
+it, across the bounding box of the mesh plus a margin of the box diagonal for
+mesh motion, wherever the location is.
 
 ### 2.2 Cells crossed by a line
 
@@ -83,9 +86,8 @@ $\mathbf{S}_f$ and centre $\mathbf{x}_f$, let
 $a = \mathbf{S}_f\cdot\mathbf{t}$ and
 $b = \mathbf{S}_f\cdot(\mathbf{x}_f - \mathbf{x}_0)$. For $a > 0$ the interval
 is cut above at $s = b/a$ (the line leaves), for $a < 0$ below (the line
-enters, and the face is recorded as the entry face). The face is taken as
-parallel to the line if the distance of the line from the face plane changes by
-less than a tolerance along the whole line,
+enters). The face is taken as parallel to the line if the distance of the line
+from the face plane changes by less than a tolerance along the whole line,
 
 $$
 |a|\,L \le \tau, \qquad \tau = 10^{-9}\,|\mathbf{S}_f|^{3/2}, \tag{1}
@@ -94,7 +96,8 @@ $$
 and the cell is then rejected only if $b < -\tau$. A line lying in a face plane
 is thereby inside the cells on both sides. The cell is crossed if the clipped
 interval has a length above $10^{-15}L$; its ends $s_\mathrm{in}$ and
-$s_\mathrm{out}$ are stored with the cells, which are sorted along the line.
+$s_\mathrm{out}$, the segment of the line in the cell, are stored with the
+cells.
 
 The cells are found once by a `faceOnlySet` with a cached `meshSearch`, plus the
 cells nearest to five points of the line inside the local mesh bounds, which
@@ -123,51 +126,50 @@ all cells of the mesh that cross the line, and the numbers of missing and extra
 cells are written to the log. The test suite uses this to verify the flood
 fill.
 
-### 2.3 Interface position in a cell
+### 2.3 Liquid along a line
 
-Three methods are available:
+At each write, each cell of a line contributes the part of its segment
+$[s_\mathrm{in}, s_\mathrm{out}]$ that lies in the liquid:
 
-- **reconstructed**: the interface plane of the geometric VoF reconstruction,
-  for solvers such as `interIsoFoam`. The normal and centre are read from the
-  fields `interfaceNormal.<phase>` and `interfaceCentre.<phase>`, which the
-  reconstruction schemes register on the mesh and update at the end of the
-  advection step. `surfacePosition` depends only on these names, not on the
-  reconstruction classes, so it works with any library that registers them
-  (such as OpenFOAM's `geometricVoF` or a modified copy) without linking to it.
-  Interface cells are cells with a non-zero normal.
-- **plic**: a plane with the Youngs normal (the Gauss gradient of $\alpha$
-  interpolated to the cell points) positioned by bisection so that it cuts the
-  volume fraction $\alpha$ from the cell. The cut volume is summed over
-  tetrahedra from the cell centre, face centres and face edges. Interface cells
-  have $\alpha_\mathrm{tol} < \alpha < 1 - \alpha_\mathrm{tol}$. This method
-  works with any solver; the point interpolation of $\alpha$ covers the whole
-  mesh once per write.
-- **alpha**: the point where $\alpha = 0.5$, interpolated linearly between the
-  centres of each line cell and the cell before it along the line, also across
-  processor and cyclic faces.
+- a full cell, $\alpha \ge 1 - \epsilon$ with $\epsilon$ = `surfCellTol`, its
+  whole segment, without any computation;
+- an empty cell, $\alpha \le \epsilon$, nothing;
+- an interface cell, $\epsilon < \alpha < 1 - \epsilon$, the part of the segment
+  on the liquid side of the isosurface of $\alpha$, interpolated to the mesh
+  points, that cuts the volume fraction $\alpha$ from the cell. The function
+  object holds its own point values of $\alpha$, interpolated once per write,
+  and its own `surfaceIteratorIso`, whose `vofCutCell` finds the isosurface as
+  in the `isoAlpha` reconstruction (tolerance `isoFaceTol`, 100 iterations).
+  With the centre $\mathbf{c}$ and area vector $\mathbf{n}$ of the isosurface,
+  oriented towards the centre of the submerged part of the cell, the liquid is
+  where $(\mathbf{x}(s) - \mathbf{c})\cdot\mathbf{n} > 0$; the segment is cut at
+  $s = \mathbf{n}\cdot(\mathbf{c} - \mathbf{x}_0)/(\mathbf{n}\cdot\mathbf{t})$.
+  A cell that `vofCutCell` does not cut is counted as full or empty by
+  $\alpha \ge 0.5$.
 
-The default, `auto`, uses `reconstructed` if the fields are registered and
-`plic` otherwise.
+The liquid parts of the cells on each processor are merged where they touch,
+so that a column of full cells becomes a single part, and gathered on the
+master processor.
 
-### 2.4 First interface along a line
+### 2.4 Heights and positions
 
-The cells of a line are visited in order. The crossing of a cell's interface
-plane with the line is an *event* if it lies within
-$[s_\mathrm{in}, s_\mathrm{out}]$ of the cell (to a relative tolerance of
-$10^{-6}$), and the smallest event distance is used. A sharp interface on a face
-between two full cells ($\alpha$ within $10^{-6}$ of 0 and 1 on either side of
-the entry face, also across processor and cyclic faces) is an event at
-$s_\mathrm{in}$. Only if a line has no event anywhere is the first plane
-crossing outside its cell used as a fallback. The visit stops once
-$s_\mathrm{in}$ exceeds the best event.
+Where several cells cover the same part of a line (a line in a face plane, on an
+edge, or on a processor or cyclic face), their liquid lengths are averaged:
+after every mesh change the ends of the segments of all line cells, on all
+processors, divide the line into pieces, each covered by a known number of
+cells. The liquid length of the line is
 
-### 2.5 Parallel runs
+$$
+W = \sum_{\text{liquid parts } p}\ \sum_{\text{pieces } j} \frac{|p \cap j|}{n_j},
+$$
 
-Each processor finds the first event and fallback of each line on its part of
-the line, and one `listReduce` with a minimum over all lines selects the first
-along the whole line. Only the distance is reduced, so a point found by several
-cells or processors (an interface or a line on a face, edge or point) is
-reported once, identically in serial and parallel.
+where $n_j$ is the number of cells covering piece $j$, and the length of the
+line in the mesh is the total length of the covered pieces. As in
+`interfaceHeight`, the height of the liquid above the lower boundary is
+$h_B = W$ (or the length in the mesh minus $W$ with `liquid false`), the lower
+boundary being the end of the last covered piece. A sharp interface on a face,
+as set by `setFields`, needs no special treatment, and droplets or bubbles
+shift the height only by their volume along the line.
 
 ## 3. Test suite
 
@@ -192,14 +194,14 @@ passed, respectively. All flow cases use OpenFOAM's `interIsoFoam`
 OpenFOAM Foundation in May 2017 (OpenFOAM-6) and has been in OpenFOAM.com since
 v2006, which added the optional `direction` entry. Its algorithm is the same in
 all OpenFOAM.com releases from v2006 to v2606: for each location it builds a
-`midPointAndFaceSet` along the mesh diagonal, with a new `meshSearch` at every
-write, integrates the interpolated volume fraction along it and sums the result
-over the processors. The only changes are the writing of the file headers
-(removed in v2012, restored on the master processor in v2406) and the
-documentation (v2512). The OpenFOAM Foundation corrected its parallel operation
-in May 2023 (commit `1d78434bee`, OpenFOAM-11) by skipping sampling segments
-between two faces; OpenFOAM.com does not have this correction. The tests use
-the v2512 version.
+`midPointAndFaceSet` along the mesh diagonal in the direction, which points
+downwards (gravity), with a new `meshSearch` at every write, integrates the
+interpolated volume fraction along it and sums the result over the processors.
+The only changes are the writing of the file headers (removed in v2012,
+restored on the master processor in v2406) and the documentation (v2512). The
+OpenFOAM Foundation corrected its parallel operation in May 2023 (commit
+`1d78434bee`, OpenFOAM-11) by skipping sampling segments between two faces;
+OpenFOAM.com does not have this correction. The tests use the v2512 version.
 
 ### 3.1 Accuracy: exact stream function wave
 
@@ -209,16 +211,15 @@ every time step, and a coded function object writes the exact surface elevation
 at the lines. The flume has a coarse (38×8) and a medium (95×20) mesh. Twelve
 vertical lines are placed in four cell columns, at the cell centre, a quarter
 cell off it and 2 % of a cell from a face (figure 1). The elevations are
-compared over one period with 40 samples. Without a
-reconstruction the `plic` and `alpha` methods of `surfacePosition` are tested,
-against `interfaceHeight` with its default `cellPoint` and with `cell`
-interpolation.
+compared over one period with 40 samples, for
+`surfacePosition` and for `interfaceHeight` with its default `cellPoint` and
+with `cell` interpolation.
 
 ![waveAccuracy](test/report/figures/wave.png)
 
 *Figure 1: `waveAccuracy`, medium mesh at t = 2 s: volume fraction (white air,
 blue water), the 12 vertical lines (red, three per cell
-column) and the points found by `surfacePosition` (plic).*
+column) and the positions found by `surfacePosition`.*
 
 *Table 1: Error of the interface elevation against the exact wave [mm]: rms per
 position of the line in the cell (in cell widths from the face), and mean and
@@ -228,25 +229,23 @@ maximum magnitude over all lines and samples.*
 |---|---:|---:|---:|---:|---:|
 | *coarse*, 38×8 cells | | | | | |
 | `interfaceHeight`, cellPoint | 0.499 | 0.562 | 0.511 | 0.000 | 1.631 |
-| `interfaceHeight`, cell | 25.001 | 25.082 | 25.297 | 25.000 | 31.676 |
-| `surfacePosition`, plic | 0.257 | 0.206 | 0.174 | -0.001 | 0.741 |
-| `surfacePosition`, alpha | 6.678 | 6.988 | 7.759 | 4.092 | 14.914 |
+| `interfaceHeight`, cell | 25.001 | 25.082 | 25.297 | -25.000 | 31.670 |
+| `surfacePosition` | 0.253 | 0.196 | 0.091 | 0.000 | 0.741 |
 | *medium*, 95×20 cells | | | | | |
 | `interfaceHeight`, cellPoint | 0.081 | 0.091 | 0.083 | -0.000 | 0.267 |
-| `interfaceHeight`, cell | 10.000 | 10.033 | 10.119 | 10.000 | 12.680 |
-| `surfacePosition`, plic | 0.056 | 0.043 | 0.067 | 0.003 | 0.341 |
-| `surfacePosition`, alpha | 2.159 | 2.305 | 2.661 | -0.071 | 6.023 |
+| `interfaceHeight`, cell | 10.000 | 10.033 | 10.119 | -10.000 | 12.679 |
+| `surfacePosition` | 0.041 | 0.031 | 0.007 | 0.000 | 0.119 |
 
-Table 1 shows that the plic method of `surfacePosition` has the smallest error
-on both meshes: 0.215 mm rms on the coarse mesh against
+Table 1 shows that `surfacePosition` has the smallest error on both meshes:
+0.192 mm rms on the coarse mesh against
 0.525 mm for `interfaceHeight` (cellPoint), and
-0.056 mm against 0.085 mm on the medium
-mesh. `interfaceHeight` with cell interpolation is biased by a quarter of the
-cell height (25.0 mm and 10.0 mm). The alpha
-method, a linear interpolation of cell values, has errors of several
-millimetres. Figure 2 shows the errors over the period at a cell centre and 2 %
-of a cell from a face. No method gave `nan`, and the serial and parallel
-results are identical.
+0.030 mm against 0.085 mm on the medium mesh,
+where its largest error is 0.119 mm. `interfaceHeight` with cell
+interpolation is biased by a quarter of the cell height
+(-25.0 mm and -10.0 mm); the sign of this bias
+follows the direction. Figure 2 shows the errors over the period at a cell
+centre and 2 % of a cell from a face. The serial and parallel results
+are identical.
 
 ![Error over one wave period](test/report/figures/waveError.png)
 
@@ -262,57 +261,58 @@ interfaces lie on the cyclic and the processor faces. After one short
 `interIsoFoam` step, twelve vertical lines (figure 3) test locations in a cell,
 on a face plane, on an edge, on a processor face and edge, on the cyclic
 patches, on a cyclic/processor edge and a cyclic/wall edge, far above and far
-below the mesh, and outside the domain. Six explicit lines test lines from
-below and from above, horizontal lines entering through the cyclic patches from
-outside the domain, and a line starting inside it. The results are compared
-with the exact positions; for the vertical slab the vertical lines must find no
-interface.
+below the mesh, and outside the domain. The heights and positions are compared
+with the exact values: for the flat interfaces h<sub>B</sub> = z on all lines
+crossing the mesh; for the slab h<sub>B</sub> = 1 for x < 0.5, 0 for x > 0.5,
+and 0.5 on the processor faces at x = 0.5, where a full and an empty cell are
+averaged; and the marker of a line missing the mesh for the line outside the
+domain.
 
 | Flat interface at z = 0.5 | Vertical slab of water |
 |:---:|:---:|
 | ![flat500](test/report/figures/special_flat500.png) | ![slab](test/report/figures/special_slab.png) |
 
-*Figure 3: `specialCases` on 8 processors: water coloured by processor,
+*Figure 3: `specialCases` on 8 processors: water coloured by processor, the
 vertical lines through the locations (red; the line on the right is outside the
-domain), explicit lines (green) and the points found by `surfacePosition`
-(plic).*
+domain) and the positions found by `surfacePosition`.*
 
-*Table 2: Largest error of the points found by `surfacePosition` against the
-exact positions [m], over the lines expected to find an interface; all other
-lines correctly gave `nan`. The tolerance for the geometric methods is
-1·10⁻⁸ m; the alpha method is expected within half a cell.*
+*Table 2: Largest error of the heights h<sub>B</sub>, h<sub>L</sub> and
+positions of `surfacePosition` against the exact values [m], over the lines
+crossing the mesh (tolerance 1·10⁻⁸ m), and the number of lines
+correctly reported as missing the mesh.*
 
-| Scenario | Proc. | vertical, reconstructed | vertical, plic | vertical, alpha | explicit, reconstructed | explicit, plic |
-|---|---:|---:|---:|---:|---:|---:|
-| flat, z=0.537 | 1 | 3.3·10⁻¹⁶ | 3.5·10⁻¹⁴ | 0.0076 | 1.1·10⁻¹⁶ | 3.5·10⁻¹⁴ |
-|  | 8 | 3.3·10⁻¹⁶ | 3.5·10⁻¹⁴ | 0.0076 | 1.1·10⁻¹⁶ | 3.5·10⁻¹⁴ |
-| flat, z=0.5 | 1 | 0 | 0 | 4.4·10⁻¹⁶ | 4.4·10⁻¹⁶ | 4.4·10⁻¹⁶ |
-|  | 8 | 0 | 0 | 4.4·10⁻¹⁶ | 4.4·10⁻¹⁶ | 4.4·10⁻¹⁶ |
-| flat, z=0.3 | 1 | 1.7·10⁻¹⁶ | 1.7·10⁻¹⁶ | 2.8·10⁻¹⁶ | 1.7·10⁻¹⁶ | 1.7·10⁻¹⁶ |
-|  | 8 | 1.7·10⁻¹⁶ | 1.7·10⁻¹⁶ | 2.8·10⁻¹⁶ | 1.7·10⁻¹⁶ | 1.7·10⁻¹⁶ |
-| vertical slab | 1 | 0 | 0 | 0 | 2.2·10⁻¹⁶ | 2.2·10⁻¹⁶ |
-|  | 8 | 0 | 0 | 0 | 2.2·10⁻¹⁶ | 2.2·10⁻¹⁶ |
+| Scenario | Proc. | largest error | lines missing the mesh |
+|---|---:|---:|---:|
+| flat, z=0.537 | 1 | 1·10⁻¹⁵ | 1 |
+|  | 8 | 1·10⁻¹⁵ | 1 |
+| flat, z=0.5 | 1 | 0 | 1 |
+|  | 8 | 0 | 1 |
+| flat, z=0.3 | 1 | 2.8·10⁻¹⁵ | 1 |
+|  | 8 | 2.8·10⁻¹⁵ | 1 |
+| vertical slab | 1 | 2.2·10⁻¹⁶ | 1 |
+|  | 8 | 2.2·10⁻¹⁶ | 1 |
 
-All points are exact to round-off (table 2), in serial and on 8 processors,
-including the interfaces on processor and cyclic faces and the lines on faces,
-edges and patches. The alpha method is exact where the interface lies on a face
-and 7.6 mm off for z = 0.537, as expected for a linear
-interpolation. Table 3 shows `interfaceHeight` on the same lines for z = 0.5.
-It is exact in serial, but on 8 processors the lines on processor faces and
-edges count the water of both sides, and for locations far above or below the
-mesh, or outside it, it reports 0 instead of the interface or no interface.
+All heights and positions are exact to round-off (table 2), in serial and on 8
+processors, including the interfaces on processor and cyclic faces and the
+lines on faces, edges and patches. Table 3 shows h<sub>B</sub> of
+`interfaceHeight` on some of the lines. On 8 processors, the lines on processor
+faces and edges count the water of the cells on all sides; on the cyclic
+patches and their edges it gives 0.5 instead of 1 for the slab; and for
+locations far above or below the mesh it gives 0, as its line, of the length of
+the mesh diagonal around the location, does not reach the mesh.
 
-*Table 3: `interfaceHeight` (height h<sub>B</sub> above the bottom [m]) on the
-special lines of the flat interface at z = 0.5.*
+*Table 3: `interfaceHeight`: height h<sub>B</sub> [m] above the bottom on some
+of the special lines, for the flat interface at z = 0.5 and the slab.*
 
-| Line | Location | Exact | Serial | 8 processors |
-|---:|---|---:|---:|---:|
-| 3 | processor face | 0.500 | 0.500 | 1.000 |
-| 4 | processor edge | 0.500 | 0.500 | 1.975 |
-| 7 | cyclic/processor edge | 0.500 | 0.500 | 0.900 |
-| 8 | far above | 0.500 | 0.000 | 0.000 |
-| 9 | far below | 0.500 | 0.000 | 0.000 |
-| 10 | outside the domain | – | 0.000 | 0.000 |
+| Line | Location | flat: exact | flat: serial | flat: 8 proc. | slab: exact | slab: serial | slab: 8 proc. |
+|---:|---|---:|---:|---:|---:|---:|---:|
+| 3 | processor face | 0.500 | 0.500 | 1.000 | 0.500 | 0.500 | 1.000 |
+| 4 | processor edge | 0.500 | 0.500 | 1.975 | 0.500 | 0.500 | 1.750 |
+| 5 | cyclic patch | 0.500 | 0.500 | 0.500 | 1.000 | 0.500 | 0.500 |
+| 7 | cyclic/processor edge | 0.500 | 0.500 | 0.525 | 1.000 | 0.500 | 0.750 |
+| 8 | far above | 0.500 | 0.000 | 0.000 | 1.000 | 0.000 | 0.000 |
+| 9 | far below | 0.500 | 0.000 | 0.000 | 1.000 | 0.000 | 0.000 |
+| 10 | outside the domain | – | 0.000 | 0.000 | – | 0.000 | 0.000 |
 
 ### 3.3 Moving meshes
 
@@ -333,50 +333,49 @@ on 4 processors:
 | ![amr](test/report/figures/amr.png) | ![motion t=0](test/report/figures/motion_t0.png) | ![motion t=0.2](test/report/figures/motion_t2.png) |
 
 *Figure 4: `movingMesh`. (a) Refined mesh, volume fraction, lines and the
-points found by `surfacePosition` (reconstructed). (b, c) Mesh coloured by
-processor on 4 processors with line 3 (red): the mesh moves right, and line 3
-passes from the right to the left subdomains.*
+positions found by `surfacePosition`. (b, c) Mesh coloured by processor on 4
+processors with line 3 (red): the mesh moves right, and line 3 passes from the
+right to the left subdomains.*
 
 *Table 4: `movingMesh`: line cells after all mesh changes compared with all
-cells (`checkLineCells`), outputs without an interface, and rms difference of
-the elevation from `interfaceHeight` [mm].*
+cells (`checkLineCells`), outputs of lines missing the mesh (off mesh), and the
+rms and largest difference of h<sub>B</sub> from `interfaceHeight` [mm].*
 
-| Case | Proc. | Steps | Changes | Line cells found | missing | extra | `nan` | rms vs. `interfaceHeight`, reconstructed | rms, plic |
+| Case | Proc. | Steps | Changes | Line cells found | missing | extra | off mesh | rms vs. `interfaceHeight` | max |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| amr | 1 | 400 | 177 | 48730 | 0 | 0 | 0 | 41.20 | 46.58 |
-| amr | 4 | 400 | 396 | 109857 | 0 | 0 | 0 | 33.58 | 33.92 |
-| motion | 1 | 51 | 50 | 7000 | 0 | 0 | 0 | 1.84 | 0.61 |
-| motion | 4 | 51 | 50 | 7000 | 0 | 0 | 0 | 1.84 | 0.60 |
+| amr | 1 | 400 | 177 | 48730 | 0 | 0 | 0 | 6.52 | 42.1 |
+| amr | 4 | 400 | 396 | 109857 | 0 | 0 | 0 | 7.26 | 27.4 |
+| motion | 1 | 51 | 50 | 7000 | 0 | 0 | 0 | 0.43 | 3.0 |
+| motion | 4 | 51 | 50 | 7000 | 0 | 0 | 0 | 0.43 | 3.0 |
 
 In all runs the flood fill finds exactly the cells crossing the lines
 (table 4): 177 and 396 mesh changes in the
-serial and parallel amr runs, 50 in the motion runs. In the
-parallel motion run, line 3 moves from the subdomains right of a processor
-boundary to those left of it between t = 0.1 and 0.1125 s (figure 4); the flood
-fill follows it across the processor faces and finds all 7000 line
-cells, as in serial.
+serial and parallel amr runs, 50 in the motion runs, and no
+line misses the mesh. In the parallel motion run, line 3 moves from the
+subdomains right of a processor boundary to those left of it between t = 0.1
+and 0.1125 s (figure 4); the flood fill follows it across the processor faces
+and finds all 7000 line cells, as in serial.
 
-The differences from `interfaceHeight` in the amr runs (table 4, maximum
-461 mm) are not errors of either function object: the refinement
-produces spurious velocities that limit the time step to about 0.00021 s
-and throw up droplets, so the first interface from above and the integrated
-water height differ. For the same reason serial and parallel amr runs diverge
-(`interfaceHeight` differs by up to 10.8 mm). In the motion
-runs, serial and parallel flows differ slightly, by up to
-0.13 mm in `interfaceHeight` and 0.67 mm
-in `surfacePosition`.
+In the amr runs the refinement produces spurious velocities that limit the time
+step to about 0.00021 s and throw up droplets. The heights of
+`surfacePosition` and `interfaceHeight` still differ by at most
+42 mm, since both measure the liquid volume along the line; serial
+and parallel amr runs diverge (`interfaceHeight` differs by up to
+10.8 mm). In the motion runs, serial and parallel flows differ
+slightly, by up to 0.13 mm in `interfaceHeight` and
+0.21 mm in `surfacePosition`.
 
 ### 3.4 Cost in a large case
 
 A 3D standing wave in a closed unit cube with 1 000 000 cells is run with
 `interIsoFoam` on 18 processors (scotch decomposition), with
 50 vertical lines placed off the cell centres (figure 5) and
-`surfacePosition` (reconstructed and plic) and `interfaceHeight` writing at
-every time step. OpenFOAM's profiling gives the time of each function object
-and of the flow solution; it is written with the fields after 5 start-up steps
-and at the end, and the difference gives the time of 10 steps.
+`surfacePosition` and `interfaceHeight` writing at every time step. OpenFOAM's
+profiling gives the time of each function object and of the flow solution; it
+is written with the fields after 5 start-up steps and at the end, and the
+difference gives the time of 10 steps.
 
-<img src="test/report/figures/timing.png" alt="largeTiming" width="50%">
+<img src="test/report/figures/timing.png" alt="largeTiming" width="40%">
 
 *Figure 5: `largeTiming`: water region coloured by the 18
 processor subdomains, and the 50 lines.*
@@ -387,23 +386,22 @@ of the first steps beyond the steady cost (the line search), in ms.*
 
 | | per step | per line | range | start-up |
 |---|---:|---:|---:|---:|
-| flow solution (`interIsoFoam`) | 752.1 |  | 1.20 |  |
-| `surfacePosition`, reconstructed | 2.4 | 0.048 | 1.34 | 1130 |
-| `surfacePosition`, plic | 2.9 | 0.059 | 0.04 | 953 |
-| `interfaceHeight` | 1278.4 | 25.569 | 0.15 |  |
+| flow solution (`interIsoFoam`) | 752.4 |  | 1.90 |  |
+| `surfacePosition` | 5.6 | 0.112 | 2.16 | 1140 |
+| `interfaceHeight` | 1299.1 | 25.982 | 0.89 |  |
 
-`surfacePosition` costs 2.4 ms per step (2.9 ms with
-plic), 0.3 % of the flow solution, while `interfaceHeight`
-costs 1278 ms, 170 % of the flow solution and
-538 times as much as `surfacePosition` (table 5). The initial line
-search of `surfacePosition` takes about 1130 ms once. The
-elevations of `surfacePosition` and `interfaceHeight` agree to
-0.108 mm (reconstructed, rms 0.043 mm) and
-0.079 mm (plic).
+`surfacePosition` costs 5.6 ms per step, 0.7 % of the
+flow solution, including the interpolation of α to the mesh points, while
+`interfaceHeight` costs 1299 ms, 173 % of the flow
+solution and 231 times as much as `surfacePosition` (table 5). The
+initial line search of `surfacePosition` takes about 1140 ms once.
+The heights of `surfacePosition` and `interfaceHeight` agree to
+0.123 mm (rms 0.026 mm).
 
-## 4. Defects found by the tests
+## 4. Findings of the tests
 
-Two defects of `surfacePosition` were found by the moving mesh tests and fixed:
+Two defects in the line cells of `surfacePosition` were found by the moving
+mesh tests and fixed:
 
 1. *Round-off in the test for faces parallel to the line* (`crossesLine`). A
    face was taken as parallel to the line only if
@@ -415,18 +413,26 @@ Two defects of `surfacePosition` were found by the moving mesh tests and fixed:
    eq. (1) none does.
 2. *Lines lost across processor boundaries.* The flood fill followed internal
    faces only. When the motion moved line 3 into the neighbouring subdomains,
-   neither side found any cell, and `surfacePosition` wrote `nan` for that line
-   for the rest of the run. The flood fill now continues across processor
-   faces.
+   neither side found any cell, and the line was lost for the rest of the run.
+   The flood fill now continues across processor faces.
 
-The checks of the suite were tightened accordingly: `nan` outputs are counted
-and fail the moving mesh test, and the check scripts' exit codes are passed on
-to `Allrun`.
+The checks of the suite were tightened accordingly: lines missing the mesh fail
+the moving mesh test, and the check scripts' exit codes are passed on to
+`Allrun`.
+
+Earlier versions of `surfacePosition` reported the crossing of the line with the
+interface plane of one interface cell, the one with α closest to 0.5. In the
+amr runs, droplets with α near 0.5 and steep planes then gave positions up to
+metres outside the domain; the liquid length of section 2.4 removes this. The
+area vector of the isosurface from `surfaceIteratorIso`, documented to point
+from high to low values, gave the liquid on the wrong side in the flat test, so
+the liquid side is taken from the centre of the submerged part of the cell
+instead.
 
 The tests also show that `interfaceHeight` (v2512) is wrong on processor faces
-and for locations outside the vertical extent of the mesh (table 3). The first
-may be what the OpenFOAM Foundation's parallel correction addresses
-([section 3](#3-test-suite)); this was not tested.
+and edges, on cyclic patches, and for locations outside the vertical extent of
+the mesh (table 3). The first may be what the OpenFOAM Foundation's parallel
+correction addresses ([section 3](#3-test-suite)); this was not tested.
 
 ## 5. Reproducing the tests and this README
 
@@ -444,4 +450,4 @@ cd report
 the `postProcessing` data of the cases; `makeFigures.py` renders the figures
 from the case data with ParaView; `makeReadme.py` writes this README from
 `test/report/README.md.in`. The report and this README were generated from the
-run of 2026-09-17 07:08 (source and tests at revision `1ad71fe`).
+run of 2026-09-17 11:26 (source and tests at revision `24e2265`).

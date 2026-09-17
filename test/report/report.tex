@@ -43,61 +43,65 @@
 \maketitle
 
 \begin{abstract}
-\noindent \sP{} is an OpenFOAM function object that reports where a
-volume-of-fluid interface crosses user-specified lines. It is an alternative
-to OpenFOAM's \iH{}, which integrates the volume fraction along a
-sampled line. \sP{} finds the cells crossed by each line once and follows
-them through mesh changes by a flood fill, so its cost per write does not
-depend on the mesh size, and it computes the crossing geometrically from the
-interface plane in the cell. This report describes the implementation and the
-test suite in \texttt{test}. All numbers, tables and
-figures are generated from the output of one run of the suite (wall time
-\suiteTime). In a \timingCells-cell case on \timingProcs{} processors, \sP{}
-costs \SI{\timingSP}{ms} per time step for \timingLines{} lines, against
-\SI{\timingIH}{ms} for \iH{}, and on the exact stream function wave it is
-more accurate than \iH{} on the same mesh.
+\noindent \sP{} is an OpenFOAM function object that reports the height and
+position of a volume-of-fluid interface at a set of locations, with the same
+entries and output as OpenFOAM's \iH{}, which integrates the interpolated
+volume fraction along a sampled line. \sP{} finds the cells crossed by each
+line once and follows them through mesh changes by a flood fill, so its cost
+per write does not depend on the mesh size, and it sums the lengths of the
+line inside the liquid, cutting each interface cell geometrically with the
+isosurface of the volume fraction. This report describes the implementation
+and the test suite in \texttt{test}. All numbers, tables and figures are
+generated from the output of one run of the suite (wall time \suiteTime). In a
+\timingCells-cell case on \timingProcs{} processors, \sP{} costs
+\SI{\timingSP}{ms} per time step for \timingLines{} lines, against
+\SI{\timingIH}{ms} for \iH{}; on the exact stream function wave it is more
+accurate than \iH{} on the same mesh, and it is exact for flat interfaces,
+also on faces and processor boundaries.
 \end{abstract}
 
 % --------------------------------------------------------------------------- %
 \section{Usage}
 
 \sP{} is built into the library \texttt{libsurfacePosition} by
-\texttt{Allwmake} in its repository. It links only OpenFOAM's
-\texttt{finiteVolume}, \texttt{meshTools}, \texttt{sampling} and
-\texttt{lagrangian} libraries. Lines are given either as
-locations and a direction, as for \iH{}, or as explicit start and end points:
+\texttt{Allwmake} in its repository. It links OpenFOAM's \texttt{finiteVolume},
+\texttt{meshTools}, \texttt{sampling}, \texttt{lagrangian} and
+\texttt{geometricVoF} libraries. Its entries and output are those of \iH{}, so
+that a dictionary of \iH{} works after changing its \texttt{type} and
+\texttt{libs}, and post-processing tools for \iH{} read its output:
 \begin{lstlisting}
 surfacePosition1
 {
     type            surfacePosition;
     libs            (surfacePosition);
-    locations       ((1.0001 0.0001 0.0001));
-    // or explicit lines: lines (((x0 y0 z0) (x1 y1 z1)));
-    direction       (0 0 1);        // optional, default -g
-    alpha           alpha.water;    // optional
-    method          auto;           // reconstructed, plic, alpha or auto
-    alphaTol        1e-8;           // optional
+    locations       ((0 0 0) (10 0 0) (20 0 0));
+    alpha           alpha.water;    // default alpha
+    liquid          true;           // alpha is the liquid's
+    direction       (0 0 -1);       // downwards, default gravity
+    surfCellTol     1e-8;           // interface cells
+    isoFaceTol      1e-8;           // tolerance of the isosurface cut
     checkLineCells  false;          // tests: compare line cells with all cells
     fullSearchInterval 0;           // full search every N mesh changes
-    writeControl    timeStep;
-    writeInterval   1;
 }
 \end{lstlisting}
-The file \texttt{postProcessing/<name>/<time>/surfacePosition.dat} holds, per
-line, the distance $s$ from the line start, the height $h$ above the location
-(locations only) and the point $(x, y, z)$. A line without an interface is
-written as \texttt{nan}.
+The \iH{} entry \texttt{interpolationScheme} is not used. The files
+\texttt{height.dat} and \texttt{position.dat} in
+\texttt{postProcessing/<name>/<time>} hold, per location, the height $h_B$ of the liquid above the lower boundary,
+where the line leaves the mesh along the direction, the height
+$h_L = h_B - h_{LB}$ of the interface above the location, where $h_{LB}$ is the
+height of the location above the lower boundary, and the position of the
+interface, the location moved by $h_L$ against the direction. As in \iH{}, a
+dry line gives $h_B = 0$, and a line missing the mesh $h_B = 0$ and
+$h_L = \mathrm{GREAT}$ ($10^{15}$).
 
 % --------------------------------------------------------------------------- %
 \section{Implementation}
 
 \subsection{Lines}
-With locations, each line runs through the location along $-\mathbf{d}$,
-where $\mathbf{d}$ is the upward direction, from above the mesh to below it,
-across the bounding box of the mesh plus a margin of the box diagonal for mesh
-motion. This holds wherever the location is, also outside the mesh, and the
-first interface found from the start is the uppermost one. Explicit lines are
-used as given; the first interface from their start is reported.
+Through each location a line runs along the unit downward direction
+$\mathbf{t}$ (the \texttt{direction} entry, or gravity), from above the mesh to
+below it, across the bounding box of the mesh plus a margin of the box
+diagonal for mesh motion, wherever the location is.
 
 \subsection{Cells crossed by a line}
 Whether a line $\mathbf{x}(s) = \mathbf{x}_0 + s\,\mathbf{t}$,
@@ -107,9 +111,9 @@ area vector $\mathbf{S}_f$ and centre $\mathbf{x}_f$, let
 $a = \mathbf{S}_f\cdot\mathbf{t}$ and
 $b = \mathbf{S}_f\cdot(\mathbf{x}_f - \mathbf{x}_0)$. For $a > 0$ the
 interval is cut above at $s = b/a$ (the line leaves), for $a < 0$ below (the
-line enters, and the face is recorded as the entry face). The face is taken
-as parallel to the line if the distance of the line from the face plane
-changes by less than a tolerance along the whole line,
+line enters). The face is taken as parallel to the line if the distance of the
+line from the face plane changes by less than a tolerance along the whole
+line,
 \begin{equation}
   |a|\,L \le \tau, \qquad \tau = 10^{-9}\,|\mathbf{S}_f|^{3/2},
   \label{eq:parallel}
@@ -117,7 +121,8 @@ changes by less than a tolerance along the whole line,
 and the cell is then rejected only if $b < -\tau$. A line lying in a face
 plane is thereby inside the cells on both sides. The cell is crossed if the
 clipped interval has a length above $10^{-15}L$; its ends $s_\mathrm{in}$ and
-$s_\mathrm{out}$ are stored with the cells, which are sorted along the line.
+$s_\mathrm{out}$, the segment of the line in the cell, are stored with the
+cells.
 
 The cells are found once by a \texttt{faceOnlySet} with a cached
 \texttt{meshSearch}, plus the cells nearest to five points of the line inside
@@ -148,49 +153,49 @@ compared with all cells of the mesh that cross the line, and the numbers of
 missing and extra cells are written to the log. The test suite uses this to
 verify the flood fill.
 
-\subsection{Interface position in a cell}
-Three methods are available:
-\begin{description}
-\item[reconstructed] The interface plane of the geometric VoF reconstruction,
-  for solvers such as \texttt{interIsoFoam}. The normal and centre are read
-  from the fields \texttt{interfaceNormal.<phase>} and
-  \texttt{interfaceCentre.<phase>}, which the reconstruction schemes register
-  on the mesh and update at the end of the advection step. \sP{} depends only
-  on these names, not on the reconstruction classes, so it works with any
-  library that registers them (such as OpenFOAM's \texttt{geometricVoF} or a
-  modified copy) without linking to it. Interface cells are cells with a
-  non-zero normal.
-\item[plic] A plane with the Youngs normal (the Gauss gradient of $\alpha$
-  interpolated to the cell points) positioned by bisection so that it cuts the
-  volume fraction $\alpha$ from the cell. The cut volume is summed over
-  tetrahedra from the cell centre, face centres and face edges. Interface
-  cells have $\alpha_\mathrm{tol} < \alpha < 1 - \alpha_\mathrm{tol}$. This
-  method works with any solver; the point interpolation of $\alpha$ covers
-  the whole mesh once per write.
-\item[alpha] The point where $\alpha = 0.5$, interpolated linearly between the
-  centres of each line cell and the cell before it along the line, also
-  across processor and cyclic faces.
-\end{description}
-The default, \texttt{auto}, uses \texttt{reconstructed} if the fields are
-registered and \texttt{plic} otherwise.
+\subsection{Liquid along a line}
+At each write, each cell of a line contributes the part of its segment
+$[s_\mathrm{in}, s_\mathrm{out}]$ that lies in the liquid:
+\begin{itemize}
+\item a full cell, $\alpha \ge 1 - \epsilon$ with
+  $\epsilon$ = \texttt{surfCellTol}, its whole segment, without any
+  computation;
+\item an empty cell, $\alpha \le \epsilon$, nothing;
+\item an interface cell, $\epsilon < \alpha < 1 - \epsilon$, the part of the
+  segment on the liquid side of the isosurface of $\alpha$, interpolated to the
+  mesh points, that cuts the volume fraction $\alpha$ from the cell. The
+  function object holds its own point values of $\alpha$, interpolated once
+  per write, and its own \texttt{surfaceIteratorIso}, whose
+  \texttt{vofCutCell} finds the isosurface as in the \texttt{isoAlpha}
+  reconstruction (tolerance \texttt{isoFaceTol}, 100 iterations). With the
+  centre $\mathbf{c}$ and area vector $\mathbf{n}$ of the isosurface, oriented
+  towards the centre of the submerged part of the cell, the liquid is where
+  $(\mathbf{x}(s) - \mathbf{c})\cdot\mathbf{n} > 0$; the segment is cut at
+  $s = \mathbf{n}\cdot(\mathbf{c} - \mathbf{x}_0)/(\mathbf{n}\cdot\mathbf{t})$.
+  A cell that \texttt{vofCutCell} does not cut is counted as full or empty by
+  $\alpha \ge 0.5$.
+\end{itemize}
+The liquid parts of the cells on each processor are merged where they touch,
+so that a column of full cells becomes a single part, and gathered on the
+master processor.
 
-\subsection{First interface along a line}
-The cells of a line are visited in order. The crossing of a cell's interface
-plane with the line is an \emph{event} if it lies within
-$[s_\mathrm{in}, s_\mathrm{out}]$ of the cell (to a relative tolerance of
-$10^{-6}$), and the smallest event distance is used. A sharp interface on a
-face between two full cells ($\alpha$ within $10^{-6}$ of 0 and 1 on either
-side of the entry face, also across processor and cyclic faces) is an event at
-$s_\mathrm{in}$. Only if a line has no event anywhere is the first plane
-crossing outside its cell used as a fallback. The visit stops once
-$s_\mathrm{in}$ exceeds the best event.
-
-\subsection{Parallel runs}
-Each processor finds the first event and fallback of each line on its part of
-the line, and one \texttt{listReduce} with a minimum over all lines selects
-the first along the whole line. Only the distance is reduced, so a point
-found by several cells or processors (an interface or a line on a face, edge
-or point) is reported once, identically in serial and parallel.
+\subsection{Heights and positions}
+Where several cells cover the same part of a line (a line in a face plane, on
+an edge, or on a processor or cyclic face), their liquid lengths are
+averaged: after every mesh change the ends of the segments of all line cells,
+on all processors, divide the line into pieces, each covered by a known
+number of cells. The liquid length of the line is
+\begin{equation}
+  W = \sum_{\text{liquid parts } p}\ \sum_{\text{pieces } j}
+      \frac{|p \cap j|}{n_j},
+\end{equation}
+where $n_j$ is the number of cells covering piece $j$, and the length of the
+line in the mesh is the total length of the covered pieces. As in \iH{}, the
+height of the liquid above the lower boundary is $h_B = W$ (or the length in
+the mesh minus $W$ with \texttt{liquid false}), the lower boundary being the
+end of the last covered piece. A sharp interface on a face, as set by
+\texttt{setFields}, needs no special treatment, and droplets or bubbles shift
+the height only by their volume along the line.
 
 % --------------------------------------------------------------------------- %
 \section{Test suite}
@@ -221,7 +226,8 @@ they \specialPassed{} and \movingPassed{}, respectively.
 (OpenFOAM-6) and has been in OpenFOAM.com since v2006, which added the
 optional \texttt{direction} entry. Its algorithm is the same in all
 OpenFOAM.com releases from v2006 to v2606: for each location it builds a
-\texttt{midPointAndFaceSet} along the mesh diagonal, with a new
+\texttt{midPointAndFaceSet} along the mesh diagonal in the direction, which
+points downwards (gravity), with a new
 \texttt{meshSearch} at every write, integrates the interpolated volume fraction
 along it and sums the result over the processors. The only changes are the
 writing of the file headers (removed in v2012, restored on the master
@@ -239,17 +245,16 @@ writes the exact surface elevation at the lines. The flume has a coarse
 ($38\times8$) and a medium ($95\times20$) mesh. Twelve vertical lines are
 placed in four cell columns, at the cell centre, a quarter cell off it and
 \SI{2}{\%} of a cell from a face (fig.~\ref{fig:wave}). The elevations are
-compared over one period with \waveMediumSamples{} samples. Without a
-reconstruction the \texttt{plic} and \texttt{alpha} methods of \sP{} are
-tested, against \iH{} with its default \texttt{cellPoint} and with
-\texttt{cell} interpolation.
+compared over one period with \waveMediumSamples{} samples, for \sP{} and
+for \iH{} with its default \texttt{cellPoint} and with \texttt{cell}
+interpolation.
 
 \begin{figure}[!htbp]
   \centering
   \includegraphics[width=\textwidth]{figures/wave.png}
   \caption{\texttt{waveAccuracy}, medium mesh at $t = \SI{2}{s}$: volume
     fraction (white air, blue water), the \waveMediumLines{} vertical lines
-    (red, three per cell column) and the points found by \sP{} (plic).}
+    (red, three per cell column) and the positions found by \sP{}.}
   \label{fig:wave}
 \end{figure}
 
@@ -270,16 +275,16 @@ tested, against \iH{} with its default \texttt{cellPoint} and with
   \end{tabular}
 \end{table}
 
-Table~\ref{tab:wave} shows that the plic method of \sP{} has the smallest
-error on both meshes: \SI{\waveCoarsePlicRms}{mm} rms on the coarse mesh
-against \SI{\waveCoarseCellPointRms}{mm} for \iH{} (cellPoint), and
-\SI{\waveMediumPlicRms}{mm} against \SI{\waveMediumCellPointRms}{mm} on the
-medium mesh. \iH{} with cell interpolation is biased by a quarter of the
-cell height (\SI{\waveCoarseCellMean}{mm} and \SI{\waveMediumCellMean}{mm}).
-The alpha method, a linear interpolation of cell values, has errors of
-several millimetres. Fig.~\ref{fig:waveerror} shows the errors over the
-period at a cell centre and \SI{2}{\%} of a cell from a face. No method gave
-\texttt{nan}, and the serial and parallel results \waveParallel.
+Table~\ref{tab:wave} shows that \sP{} has the smallest error on both meshes:
+\SI{\waveCoarseSPRms}{mm} rms on the coarse mesh against
+\SI{\waveCoarseCellPointRms}{mm} for \iH{} (cellPoint), and
+\SI{\waveMediumSPRms}{mm} against \SI{\waveMediumCellPointRms}{mm} on the
+medium mesh, where its largest error is \SI{\waveMediumSPMax}{mm}. \iH{} with
+cell interpolation is biased by a quarter of the cell height
+(\SI{\waveCoarseCellMean}{mm} and \SI{\waveMediumCellMean}{mm}); the sign of
+this bias follows the direction. Fig.~\ref{fig:waveerror} shows the errors
+over the period at a cell centre and \SI{2}{\%} of a cell from a face. The
+serial and parallel results \waveParallel.
 
 \begin{figure}[!htbp]
   \centering
@@ -299,11 +304,11 @@ processor faces. After one short \texttt{interIsoFoam} step, twelve vertical
 lines (fig.~\ref{fig:special}) test locations in a cell, on a face plane, on
 an edge, on a processor face and edge, on the cyclic patches, on a
 cyclic/processor edge and a cyclic/wall edge, far above and far below the
-mesh, and outside the domain. Six explicit lines test lines from below and
-from above, horizontal lines entering through the cyclic patches from outside
-the domain, and a line starting inside it. The results are compared with the
-exact positions; for the vertical slab the vertical lines must find no
-interface.
+mesh, and outside the domain. The heights and positions are compared with the
+exact values: for the flat interfaces $h_B = z$ on all lines crossing the
+mesh; for the slab $h_B = 1$ for $x < 0.5$, 0 for $x > 0.5$, and 0.5 on the
+processor faces at $x = 0.5$, where a full and an empty cell are averaged; and
+the marker of a line missing the mesh for the line outside the domain.
 
 \begin{figure}[!htbp]
   \centering
@@ -317,49 +322,46 @@ interface.
     \caption{Vertical slab of water}
   \end{subfigure}
   \caption{\texttt{specialCases} on 8 processors: water coloured by
-    processor, vertical lines through the locations (red; the line on the
-    right is outside the domain), explicit lines (green) and the points found
-    by \sP{} (plic).}
+    processor, the vertical lines through the locations (red; the line on the
+    right is outside the domain) and the positions found by \sP{}.}
   \label{fig:special}
 \end{figure}
 
 \begin{table}[!htbp]
   \centering
-  \caption{Largest error of the points found by \sP{} against the exact
-    positions [m], over the lines expected to find an interface; all other
-    lines correctly gave \texttt{nan}. The tolerance for the geometric
-    methods is \specialTol{}\,m; the alpha method is expected within half a
-    cell.}
+  \caption{Largest error of the heights $h_B$, $h_L$ and positions of \sP{}
+    against the exact values [m], over the lines crossing the mesh (tolerance
+    \specialTol{}\,m), and the number of lines correctly reported as missing
+    the mesh.}
   \label{tab:special}
-  \begin{tabular}{llccccc}
+  \begin{tabular}{llcc}
     \toprule
-    & & \multicolumn{3}{c}{vertical lines} & \multicolumn{2}{c}{explicit lines} \\
-    \cmidrule(lr){3-5} \cmidrule(lr){6-7}
-    Scenario & Proc. & reconstructed & plic & alpha & reconstructed & plic \\
+    Scenario & Proc. & largest error & lines missing the mesh \\
     \midrule
     \inputrows{generated/tabSpecial.tex}
     \bottomrule
   \end{tabular}
 \end{table}
 
-All points are exact to round-off (table~\ref{tab:special}), in serial and on
-8 processors, including the interfaces on processor and cyclic faces and the
-lines on faces, edges and patches. The alpha method is exact where the
-interface lies on a face and \SI{\specialAlphaError}{mm} off for $z = 0.537$, as expected for
-a linear interpolation. Table~\ref{tab:specialIH} shows \iH{} on the same
-lines for $z = 0.5$. It is exact in serial, but on 8 processors the lines on
-processor faces and edges count the water of both sides, and for locations far
-above or below the mesh, or outside it, it reports 0 instead of the interface
-or no interface.
+All heights and positions are exact to round-off (table~\ref{tab:special}), in
+serial and on 8 processors, including the interfaces on processor and cyclic
+faces and the lines on faces, edges and patches. Table~\ref{tab:specialIH}
+shows $h_B$ of \iH{} on some of the lines. On 8 processors, the lines on
+processor faces and edges count the water of the cells on all sides; on the
+cyclic patches and their edges it gives 0.5 instead of 1 for the slab; and for
+locations far above or below the mesh it gives 0, as its line, of the length
+of the mesh diagonal around the location, does not reach the mesh.
 
 \begin{table}[!htbp]
   \centering
-  \caption{\iH{} (height $h_B$ above the bottom [m]) on the special lines of
-    the flat interface at $z = 0.5$.}
+  \caption{\iH{}: height $h_B$ [m] above the bottom on some of the special
+    lines, for the flat interface at $z = 0.5$ and the slab.}
   \label{tab:specialIH}
-  \begin{tabular}{rlccc}
+  \begin{tabular}{rlcccccc}
     \toprule
-    Line & Location & Exact & Serial & 8 processors \\
+    & & \multicolumn{3}{c}{flat, $z = 0.5$} & \multicolumn{3}{c}{slab} \\
+    \cmidrule(lr){3-5} \cmidrule(lr){6-8}
+    Line & Location & exact & serial & 8 proc. & exact & serial & 8 proc. \\
     \midrule
     \inputrows{generated/tabSpecialIH.tex}
     \bottomrule
@@ -402,7 +404,7 @@ in serial and on 4 processors:
     \caption{motion, $t = \SI{0.2}{s}$}
   \end{subfigure}
   \caption{\texttt{movingMesh}. (a) Refined mesh, volume fraction, lines and
-    the points found by \sP{} (reconstructed). (b, c) Mesh coloured by
+    the positions found by \sP{}. (b, c) Mesh coloured by
     processor on 4 processors with line 3 (red): the mesh moves right, and
     line 3 passes from the right to the left subdomains.}
   \label{fig:moving}
@@ -411,14 +413,14 @@ in serial and on 4 processors:
 \begin{table}[!htbp]
   \centering
   \caption{\texttt{movingMesh}: line cells after all mesh changes compared
-    with all cells (\texttt{checkLineCells}), outputs without an interface,
-    and rms difference of the elevation from \iH{} [mm].}
+    with all cells (\texttt{checkLineCells}), outputs of lines missing the
+    mesh (off mesh), and the rms and largest difference of $h_B$ from \iH{} [mm].}
   \label{tab:moving}
-  \begin{tabular}{lcccccccc c}
+  \begin{tabular}{lccccccccc}
     \toprule
-    & & & & \multicolumn{3}{c}{line cells} & & \multicolumn{2}{c}{rms vs.\ \iH{}} \\
+    & & & & \multicolumn{3}{c}{line cells} & & \multicolumn{2}{c}{vs.\ \iH{}} \\
     \cmidrule(lr){5-7} \cmidrule(lr){9-10}
-    Case & Proc. & Steps & Changes & found & missing & extra & \texttt{nan} & reconstr. & plic \\
+    Case & Proc. & Steps & Changes & found & missing & extra & off mesh & rms & max \\
     \midrule
     \inputrows{generated/tabMoving.tex}
     \bottomrule
@@ -428,18 +430,18 @@ in serial and on 4 processors:
 In all runs the flood fill finds exactly the cells crossing the lines
 (table~\ref{tab:moving}): \amrRebuilds{} and \amrParallelRebuilds{} mesh
 changes in the serial and parallel amr runs, \motionRebuilds{} in the motion
-runs. In the parallel motion run, line 3 moves from the subdomains right of a
-processor boundary to those left of it between $t = 0.1$ and \SI{0.1125}{s}
-(fig.~\ref{fig:moving}); the flood fill follows it across the processor faces
-and finds all \motionCells{} line cells, as in serial.
+runs, and no line misses the mesh. In the parallel motion run, line 3 moves
+from the subdomains right of a processor boundary to those left of it between
+$t = 0.1$ and \SI{0.1125}{s} (fig.~\ref{fig:moving}); the flood fill follows
+it across the processor faces and finds all \motionCells{} line cells, as in
+serial.
 
-The differences from \iH{} in the amr runs (table~\ref{tab:moving}, maximum
-\SI{\amrMaxDiff}{mm}) are not errors of either function object: the
-refinement produces spurious velocities that limit the time step to about
-\SI{\amrDeltaT}{s} and throw up droplets, so the first interface from above
-and the integrated water height differ. For the same reason serial and
-parallel amr runs diverge (\iH{} differs by up to \SI{\amrParallelDiffIH}{mm}).
-In the motion runs, serial and parallel flows differ slightly, by up to
+In the amr runs the refinement produces spurious velocities that limit the
+time step to about \SI{\amrDeltaT}{s} and throw up droplets. The heights of
+\sP{} and \iH{} still differ by at most \SI{\amrMaxDiff}{mm}, since both
+measure the liquid volume along the line; serial and parallel amr runs
+diverge (\iH{} differs by up to \SI{\amrParallelDiffIH}{mm}). In the motion
+runs, serial and parallel flows differ slightly, by up to
 \SI{\motionParallelDiffIH}{mm} in \iH{} and \SI{\motionParallelDiffSP}{mm} in
 \sP{}.
 
@@ -448,8 +450,7 @@ In the motion runs, serial and parallel flows differ slightly, by up to
 A 3D standing wave in a closed unit cube with \timingCells{} cells is run with
 \texttt{\timingSolver} on \timingProcs{} processors (scotch decomposition), with
 \timingLines{} vertical lines placed off the cell centres
-(fig.~\ref{fig:timing}) and \sP{} (reconstructed and plic) and \iH{} writing
-at every time step. OpenFOAM's profiling gives the time of each function
+(fig.~\ref{fig:timing}) and \sP{} and \iH{} writing at every time step. OpenFOAM's profiling gives the time of each function
 object and of the flow solution; it is written with the fields after 5
 start-up steps and at the end, and the difference gives the time of
 \timingSteps{} steps.
@@ -478,40 +479,50 @@ start-up steps and at the end, and the difference gives the time of
   \end{tabular}
 \end{table}
 
-\sP{} costs \SI{\timingSP}{ms} per step (\SI{\timingSPPlic}{ms} with plic),
-\SI{\timingSPFraction}{\%} of the flow solution, while \iH{} costs
-\SI{\timingIH}{ms}, \timingIHFraction{}\,\% of the flow solution and
-\timingRatio{} times as much as \sP{} (table~\ref{tab:timing}). The initial
-line search of \sP{} takes about \SI{\timingStartup}{ms} once. The elevations
-of \sP{} and \iH{} agree to \SI{\timingDiffMax}{mm} (reconstructed, rms
-\SI{\timingDiffRms}{mm}) and \SI{\timingDiffPlicMax}{mm} (plic).
+\sP{} costs \SI{\timingSP}{ms} per step, \SI{\timingSPFraction}{\%} of the
+flow solution, including the interpolation of $\alpha$ to the mesh points,
+while \iH{} costs \SI{\timingIH}{ms}, \timingIHFraction{}\,\% of the flow
+solution and \timingRatio{} times as much as \sP{}
+(table~\ref{tab:timing}). The initial line search of \sP{} takes about
+\SI{\timingStartup}{ms} once. The heights of \sP{} and \iH{} agree to
+\SI{\timingDiffMax}{mm} (rms \SI{\timingDiffRms}{mm}).
 
 % --------------------------------------------------------------------------- %
-\section{Defects found by the tests}
+\section{Findings of the tests}
 
-Two defects of \sP{} were found by the moving mesh tests and fixed:
+Two defects in the line cells of \sP{} were found by the moving mesh tests
+and fixed:
 \begin{enumerate}
-\item \emph{Round-off in the test for faces parallel to the line} (\texttt{crossesLine}). A face
-  was taken as parallel to the line only if $|a| \le 10^{-300}|\mathbf{S}_f|$.
-  For the lines in the face planes $y = 0$ of the refined cells, round-off gave
-  $|a|/|\mathbf{S}_f| \approx 10^{-17}$, so $b/a$ became an arbitrary distance
-  that could clip a crossed cell away and disconnect the flood fill. In a separate
-  run of the serial amr case with the old test, all of its \amrRebuilds{}
-  mesh changes missed line cells; with eq.~\eqref{eq:parallel} none does.
+\item \emph{Round-off in the test for faces parallel to the line}
+  (\texttt{crossesLine}). A face was taken as parallel to the line only if
+  $|a| \le 10^{-300}|\mathbf{S}_f|$. For the lines in the face planes $y = 0$
+  of the refined cells, round-off gave $|a|/|\mathbf{S}_f| \approx 10^{-17}$,
+  so $b/a$ became an arbitrary distance that could clip a crossed cell away
+  and disconnect the flood fill. In a separate run of the serial amr case with
+  the old test, all of its \amrRebuilds{} mesh changes missed line cells; with
+  eq.~\eqref{eq:parallel} none does.
 \item \emph{Lines lost across processor boundaries.} The flood fill followed
   internal faces only. When the motion moved line 3 into the neighbouring
-  subdomains, neither side found any cell, and \sP{} wrote \texttt{nan} for
-  that line for the rest of the run. The flood fill now continues across
-  processor faces.
+  subdomains, neither side found any cell, and the line was lost for the rest
+  of the run. The flood fill now continues across processor faces.
 \end{enumerate}
-The checks of the suite were tightened accordingly: \texttt{nan} outputs are
-counted and fail the moving mesh test, and the check scripts' exit codes are
-passed on to \texttt{Allrun}.
+The checks of the suite were tightened accordingly: lines missing the mesh
+fail the moving mesh test, and the check scripts' exit codes are passed on to
+\texttt{Allrun}.
 
-The tests also show that \iH{} (v2512) is wrong on processor faces and for
-locations outside the vertical extent of the mesh (table~\ref{tab:specialIH}).
-The first may be what the OpenFOAM Foundation's parallel correction addresses
-(section~\ref{sec:tests}); this was not tested.
+Earlier versions of \sP{} reported the crossing of the line with the
+interface plane of one interface cell, the one with $\alpha$ closest to 0.5.
+In the amr runs, droplets with $\alpha$ near 0.5 and steep planes then gave
+positions up to metres outside the domain; the liquid length of section 2.4
+removes this. The area vector of the isosurface from
+\texttt{surfaceIteratorIso}, documented to point from high to low values, gave
+the liquid on the wrong side in the flat test, so the liquid side is taken
+from the centre of the submerged part of the cell instead.
+
+The tests also show that \iH{} (v2512) is wrong on processor faces and edges,
+on cyclic patches, and for locations outside the vertical extent of the mesh
+(table~\ref{tab:specialIH}). The first may be what the OpenFOAM Foundation's
+parallel correction addresses (section~\ref{sec:tests}); this was not tested.
 
 % --------------------------------------------------------------------------- %
 \section{Reproducing this report}

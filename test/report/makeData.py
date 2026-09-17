@@ -96,8 +96,7 @@ wave = load("waveAccuracy")
 METHODS = [
     ("interfaceHeight cellPoint", r"\texttt{interfaceHeight}, cellPoint"),
     ("interfaceHeight cell", r"\texttt{interfaceHeight}, cell"),
-    ("surfacePosition plic", r"\texttt{surfacePosition}, plic"),
-    ("surfacePosition alpha", r"\texttt{surfacePosition}, alpha"),
+    ("surfacePosition", r"\texttt{surfacePosition}"),
 ]
 MESH = {"coarse": (38, 8), "medium": (95, 20)}
 
@@ -116,12 +115,11 @@ for case, cap in (("coarse", "Coarse"), ("medium", "Medium")):
     r = wave[case]
     macro(f"wave{cap}Samples", str(r["samples"]))
     macro(f"wave{cap}Lines", str(r["lines"]))
-    macro(f"wave{cap}PlicRms", fixed(r["methods"]["surfacePosition plic"]["all"]["rms"], 3))
+    macro(f"wave{cap}SPRms", fixed(r["methods"]["surfacePosition"]["all"]["rms"], 3))
+    macro(f"wave{cap}SPMax", fixed(r["methods"]["surfacePosition"]["all"]["max"], 3))
     macro(f"wave{cap}CellPointRms", fixed(r["methods"]["interfaceHeight cellPoint"]["all"]["rms"], 3))
     macro(f"wave{cap}CellMean", fixed(r["methods"]["interfaceHeight cell"]["all"]["mean"], 1))
-    macro(f"wave{cap}AlphaRms", fixed(r["methods"]["surfacePosition alpha"]["all"]["rms"], 2))
     macro(f"wave{cap}ParallelMax", f"{max(r['parallel'].values()):.3g}")
-    macro(f"wave{cap}Nan", str(sum(st["all"]["nan"] for st in r["methods"].values())))
 
 pmax = max(max(wave[c]["parallel"].values()) for c in ("coarse", "medium"))
 macro("waveParallel", "are identical" if pmax == 0 else f"differ by up to \\SI{{{pmax:.3g}}}{{m}}")
@@ -134,26 +132,24 @@ zb = float(re.search(r"^\s*z1\s+([-\d.eE+]+)\s*;",
                      open(os.path.join(case, "system", "blockMeshDict")).read(), re.M).group(1))
 
 
-def series(fo, fname):
-    d = np.genfromtxt(os.path.join(case, "postProcessing", fo, "0", fname), comments="#")
-    if fname == "height.dat":
-        return d[:, 0], d[:, 1:1 + 2*n:2] + zb
-    return d[:, 0], d[:, 5:1 + 5*n:5]
+def series(fo):
+    """Times and interface elevations (hB above the bottom) per line"""
+    d = np.genfromtxt(os.path.join(case, "postProcessing", fo, "0", "height.dat"), comments="#")
+    return d[:, 0], d[:, 1:1 + 2*n:2] + zb
 
 
-t, ihp = series("interfaceHeightCellPoint", "height.dat")
-_, ihc = series("interfaceHeightCell", "height.dat")
-_, spp = series("surfacePositionPlic", "surfacePosition.dat")
-_, spa = series("surfacePositionAlpha", "surfacePosition.dat")
+t, ihp = series("interfaceHeightCellPoint")
+_, ihc = series("interfaceHeightCell")
+_, sp = series("surfacePosition")
 exact = {round(tt, 9): row for tt, row in zip(ex[:, 0], ex[:, 1:])}
 keep = [i for i, tt in enumerate(t) if round(tt, 9) in exact]
 for line in (6, 8):
     with open(os.path.join(OUT, f"waveLine{line}.csv"), "w") as f:
-        f.write("t exact ihCellPoint ihCell spPlic spAlpha\n")
+        f.write("t exact ihCellPoint ihCell sp\n")
         for i in keep:
             e = exact[round(t[i], 9)][line]
             f.write(f"{t[i]:.4f} {e*1e3:.4f} {(ihp[i, line] - e)*1e3:.4f} {(ihc[i, line] - e)*1e3:.4f}"
-                    f" {(spp[i, line] - e)*1e3:.4f} {(spa[i, line] - e)*1e3:.4f}\n")
+                    f" {(sp[i, line] - e)*1e3:.4f}\n")
 info = re.findall(r"^//\s+(\d+):\s+(\d+)\s+([\d.]+)",
                   open(os.path.join(case, "system", "lineLocations")).read(), re.M)
 for line, name in ((6, "A"), (8, "B")):
@@ -164,35 +160,34 @@ for line, name in ((6, "A"), (8, "B")):
 # specialCases
 
 special = load("specialCases")
-CHECKS = ["vertical reconstructed", "vertical plic", "vertical alpha",
-          "lines reconstructed", "lines plic"]
 rows = []
 for scenario, label in (("flat537", r"flat, $z=0.537$"), ("flat500", r"flat, $z=0.5$"),
                         ("flat300", r"flat, $z=0.3$"), ("slab", "vertical slab")):
     for run, procs in ((scenario, "1"), (scenario + "_parallel", "8")):
-        r = special["runs"][run]["checks"]
-        cells = []
-        for c in CHECKS:
-            st = r[c]
-            err = num(st["maxError"], 2) if st["maxError"] > 0 else "0"
-            cells.append(err if not st["failed"] else r"\textbf{failed}")
-        rows.append([label if procs == "1" else "", procs] + cells)
-table("tabSpecial", rows, 7)
-macro("specialAlphaError", fixed(special["runs"]["flat537"]["checks"]["vertical alpha"]["maxError"]*1e3, 1))
+        st = special["runs"][run]["checks"]["surfacePosition"]
+        err = num(st["maxError"], 2) if st["maxError"] > 0 else "0"
+        rows.append([label if procs == "1" else "", procs,
+                     err if not st["failed"] else r"\textbf{failed}",
+                     str(st["missing"])])
+table("tabSpecial", rows, 4)
 macro("specialPassed", "passed" if special["passed"] else "FAILED")
 macro("specialTol", num(special["tol"]))
 
-# interfaceHeight on the special vertical lines of the flat interface at z = 0.5
+# interfaceHeight on the special lines of the flat interface at z = 0.5 and
+# the slab
 rows = []
-names = {3: "processor face", 4: "processor edge", 7: "cyclic/processor edge",
-         8: "far above", 9: "far below", 10: "outside the domain"}
+names = {3: "processor face", 4: "processor edge", 5: "cyclic patch",
+         7: "cyclic/processor edge", 8: "far above", 9: "far below",
+         10: "outside the domain"}
 for i, name in names.items():
-    s = special["runs"]["flat500"]["interfaceHeight"][str(i)]["hB"]
-    p = special["runs"]["flat500_parallel"]["interfaceHeight"][str(i)]["hB"]
-    exact = special["runs"]["flat500"]["interfaceHeight"][str(i)]["exact"]
-    ex = "--" if exact is None else fixed(exact, 3)
-    rows.append([str(i), name, ex, fixed(s, 3), fixed(p, 3)])
-table("tabSpecialIH", rows, 5)
+    cells = [str(i), name]
+    for scenario in ("flat500", "slab"):
+        ser = special["runs"][scenario]["interfaceHeight"][str(i)]
+        par = special["runs"][scenario + "_parallel"]["interfaceHeight"][str(i)]
+        exact = ser["exact"]
+        cells += ["--" if exact is None else fixed(exact, 3), fixed(ser["hB"], 3), fixed(par["hB"], 3)]
+    rows.append(cells)
+table("tabSpecialIH", rows, 8)
 
 # --------------------------------------------------------------------------- #
 # movingMesh
@@ -204,14 +199,12 @@ for run, label in (("amr", "amr"), ("amr_parallel", "amr"), ("motion", "motion")
     r = moving["runs"][run]
     procs = "4" if run.endswith("parallel") else "1"
     rb = r["rebuilds"]["surfacePosition1"]
-    rbp = r["rebuilds"]["surfacePositionPlic1"]
-    assert rb == rbp, (rb, rbp)
     el = r["elevation"]
     rows.append([
         label, procs, str(r["steps"]), str(rb["rebuilds"]), str(rb["cells"]),
         str(rb["missing"]), str(rb["extra"]),
-        str(el["surfacePosition1"]["nan"] + el["surfacePositionPlic1"]["nan"]),
-        fixed(el["surfacePosition1"]["rms"], 2), fixed(el["surfacePositionPlic1"]["rms"], 2),
+        str(el["surfacePosition1"]["missing"]),
+        fixed(el["surfacePosition1"]["rms"], 2), fixed(el["surfacePosition1"]["max"], 1),
     ])
 table("tabMoving", rows, 10)
 macro("movingPassed", "passed" if moving["passed"] else "FAILED")
@@ -243,8 +236,7 @@ solver = re.search(r"^application\s+(\w+);", open(os.path.join(
     TESTS, "largeTiming", "case", "system", "controlDict")).read(), re.M).group(1)
 macro("timingSolver", solver)
 for key, label in (("flow solution", f"flow solution (\\texttt{{{solver}}})"),
-                   ("surfacePosition1", r"\texttt{surfacePosition}, reconstructed"),
-                   ("surfacePositionPlic1", r"\texttt{surfacePosition}, plic"),
+                   ("surfacePosition1", r"\texttt{surfacePosition}"),
                    ("interfaceHeight1", r"\texttt{interfaceHeight}")):
     c = cost[key]
     perLine = "" if key == "flow solution" else fixed(c["msPerStep"]/timing["lines"], 3)
@@ -256,7 +248,6 @@ macro("timingProcs", str(timing["processors"]))
 macro("timingLines", str(timing["lines"]))
 macro("timingSteps", str(timing["steps"]))
 macro("timingSP", fixed(cost["surfacePosition1"]["msPerStep"], 1))
-macro("timingSPPlic", fixed(cost["surfacePositionPlic1"]["msPerStep"], 1))
 macro("timingIH", fixed(cost["interfaceHeight1"]["msPerStep"], 0))
 macro("timingFlow", fixed(cost["flow solution"]["msPerStep"], 0))
 macro("timingRatio", fixed(cost["interfaceHeight1"]["msPerStep"]/cost["surfacePosition1"]["msPerStep"], 0))
@@ -265,7 +256,6 @@ macro("timingSPFraction", fixed(100*cost["surfacePosition1"]["msPerStep"]/cost["
 macro("timingStartup", fixed(cost["surfacePosition1"]["startup"], 0))
 macro("timingDiffRms", fixed(timing["elevation"]["surfacePosition1"]["rms"], 3))
 macro("timingDiffMax", fixed(timing["elevation"]["surfacePosition1"]["max"], 3))
-macro("timingDiffPlicMax", fixed(timing["elevation"]["surfacePositionPlic1"]["max"], 3))
 
 # Wall time of the whole suite, from ../log.Allrun
 m = re.search(r"^real\s+(\d+)m([\d.]+)s", open(os.path.join(TESTS, "log.Allrun")).read(), re.M)

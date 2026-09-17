@@ -126,9 +126,16 @@ def camera(v, position, focal, up, scale=None):
         v.CameraParallelScale = scale
 
 
-def last_row(path):
-    d = np.atleast_2d(np.genfromtxt(path, comments="#"))
-    return d[-1]
+def last_positions(case, fo):
+    """Interface positions of the last write (position.dat, as written by
+    interfaceHeight); None for a line missing the mesh"""
+    path = os.path.join(case, "postProcessing", fo, "0", "position.dat")
+    last = [l for l in open(path) if not l.startswith("#")][-1]
+    out = []
+    for m in re.findall(r"\(([^)]*)\)", last):
+        p = tuple(float(x) for x in m.split())
+        out.append(None if max(abs(x) for x in p) > 1e10 else p)
+    return out
 
 
 def locations(path):
@@ -162,8 +169,7 @@ def figure_wave():
 
     locs = locations(os.path.join(c, "system", "lineLocations"))
     show_lines(v, [((x, -0.11, -0.4), (x, -0.11, 0.4)) for x, _, _ in locs], radius=0.003)
-    row = last_row(os.path.join(c, "postProcessing", "surfacePositionPlic", "0", "surfacePosition.dat"))
-    pts = [(row[3 + 5*i], -0.12, row[5 + 5*i]) for i in range(len(locs))]
+    pts = [(p[0], -0.12, p[2]) for p in last_positions(c, "surfacePosition") if p]
     show_points(v, pts, 0.008)
 
     camera(v, [1.894, -10, 0], [1.894, 0, 0], [0, 0, 1], scale=0.5)
@@ -175,16 +181,11 @@ def figure_wave():
 # specialCases: 3D views of the flat interface at z = 0.5 and the slab, on 8
 # processors, with the lines and the points found
 
-def special_lines(c):
+def special_locations(c):
     text = open(os.path.join(c, "system", "controlDict")).read()
-    block = text[text.index("vertical_plic"):]
+    block = text[text.index("\n    vertical\n"):]
     locs = re.search(r"locations\s*\((.*?)\n\s*\);", block, re.S).group(1)
-    vertical = [tuple(float(x) for x in m.split()) for m in re.findall(r"\(([^()]*)\)", locs)]
-    block = text[text.index("lines_plic"):]
-    lines = re.search(r"lines\s*\((.*?)\n\s*\);", block, re.S).group(1)
-    explicit = [tuple(tuple(float(x) for x in p.split()) for p in re.findall(r"\(([^()]*)\)", m))
-                for m in re.findall(r"\((\([^()]*\)\s*\([^()]*\))\)", lines)]
-    return vertical, explicit
+    return [tuple(float(x) for x in m.split()) for m in re.findall(r"\(([^()]*)\)", locs)]
 
 
 def figure_special(name):
@@ -211,19 +212,9 @@ def figure_special(name):
     o.AmbientColor = [0, 0, 0]
     o.DiffuseColor = [0, 0, 0]
 
-    vertical, explicit = special_lines(c)
+    vertical = special_locations(c)
     show_lines(v, [((x, y, -0.35), (x, y, 1.35)) for x, y, _ in vertical], radius=0.008)
-    def clip(p):
-        return (min(max(p[0], -0.6), 1.6), p[1], min(max(p[2], -0.35), 1.35))
-
-    show_lines(v, [(clip(p0), clip(p1)) for p0, p1 in explicit],
-               colour=[0.1, 0.55, 0.1], radius=0.006)
-
-    rowV = last_row(os.path.join(c, "postProcessing", "vertical_plic", "0", "surfacePosition.dat"))
-    rowL = last_row(os.path.join(c, "postProcessing", "lines_plic", "0", "surfacePosition.dat"))
-    pts = [(rowV[3 + 5*i], rowV[4 + 5*i], rowV[5 + 5*i]) for i in range(len(vertical))]
-    pts += [(rowL[2 + 4*i], rowL[3 + 4*i], rowL[4 + 4*i]) for i in range(len(explicit))]
-    show_points(v, pts, 0.02)
+    show_points(v, [p for p in last_positions(c, "vertical") if p], 0.02)
 
     camera(v, [3.6, -3.4, 2.6], [0.95, 0.5, 0.5], [0, 0, 1])
     v.CameraViewAngle = 30
@@ -248,8 +239,7 @@ def figure_amr():
 
     locs = locations(os.path.join(c, "system", "lineLocations"))
     show_lines(v, [((x, -0.011, 0), (x, -0.011, 1)) for x, _, _ in locs], radius=0.003)
-    row = last_row(os.path.join(c, "postProcessing", "surfacePosition1", "0", "surfacePosition.dat"))
-    show_points(v, [(row[3 + 5*i], -0.012, row[5 + 5*i]) for i in range(len(locs))], 0.01)
+    show_points(v, [(p[0], -0.012, p[2]) for p in last_positions(c, "surfacePosition1") if p], 0.01)
 
     camera(v, [0.5, -10, 0.5], [0.5, 0, 0.5], [0, 0, 1], scale=0.52)
     save(v, "amr.png", size)
