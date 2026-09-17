@@ -1,0 +1,10 @@
+#!/bin/sh
+cd "${0%/*}" || exit 1
+
+for test in waveAccuracy specialCases movingMesh largeTiming
+do
+    "$test/Allclean"
+    rm -f "$test/log.Allrun"
+done
+
+#------------------------------------------------------------------------------

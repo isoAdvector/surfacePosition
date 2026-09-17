@@ -1,0 +1,238 @@
+/*--------------------------------*- C++ -*----------------------------------*\
+  =========                 |
+  \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox
+   \\    /   O peration     |
+    \\  /    A nd           | www.openfoam.com
+     \\/     M anipulation  |
+\*---------------------------------------------------------------------------*/
+FoamFile
+{
+    version     2.0;
+    format      ascii;
+    class       dictionary;
+    location    "system";
+    object      controlDict;
+}
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+
+// streamFunFoam sets the fields to the exact stream function wave at every
+// time step; the function objects sample the interface position along the
+// lines in system/lineLocations (written by ../makeLines.py).
+
+application     streamFunFoam;
+
+startFrom       startTime;
+
+startTime       0;
+
+stopAt          endTime;
+
+endTime         2;
+
+deltaT          0.05;
+
+writeControl    timeStep;
+
+writeInterval   40;
+
+purgeWrite      0;
+
+writeFormat     ascii;
+
+writePrecision  12;
+
+writeCompression off;
+
+timeFormat      general;
+
+timePrecision   8;
+
+runTimeModifiable no;
+
+adjustTimeStep  no;
+
+maxCo           0.2;
+
+maxAlphaCo      0.2;
+
+maxDeltaT       1;
+
+#include "lineLocations"
+
+functions
+{
+    // Exact surface elevation at the line locations
+    exactSurface
+    {
+        type            coded;
+        libs            (utilityFunctionObjects);
+        name            exactSurface;
+        writeControl    timeStep;
+        writeInterval   1;
+
+        codeOptions
+        #{
+            -I$(STREAMFUNCTIONWAVE_SRC) \
+            -I$(LIB_SRC)/finiteVolume/lnInclude \
+            -I$(LIB_SRC)/meshTools/lnInclude
+        #};
+
+        codeLibs
+        #{
+            -L$(FOAM_USER_LIBBIN) \
+            -lstreamFunctionWaveFvPatchField
+        #};
+
+        codeInclude
+        #{
+            #include "streamFunctionWave.H"
+            #include "uniformDimensionedFields.H"
+            #include "OFstream.H"
+            #include "IFstream.H"
+        #};
+
+        codeData
+        #{
+            autoPtr<streamFunctionWave> wavePtr_;
+            autoPtr<OFstream> osPtr_;
+            scalarField x_;
+            scalar zSeabed_ = 0;
+            scalar phase_ = 0;
+        #};
+
+        codeWrite
+        #{
+            const fvMesh& m = mesh();
+            const Time& runTime = m.time();
+
+            if (!wavePtr_)
+            {
+                // Same wave and conventions as streamFunFoam
+                const IOdictionary waveProperties
+                (
+                    IOobject
+                    (
+                        "waveProperties",
+                        runTime.constant(),
+                        m,
+                        IOobject::MUST_READ,
+                        IOobject::NO_WRITE,
+                        IOobject::NO_REGISTER
+                    )
+                );
+
+                wavePtr_.reset(new streamFunctionWave(waveProperties));
+                wavePtr_->calcCoeffs();
+
+                const uniformDimensionedVectorField& g =
+                    runTime.lookupObject<uniformDimensionedVectorField>("g");
+                const vector up(normalised(-g.value()));
+                const vector kDir
+                (
+                    normalised(waveProperties.get<vector>("direction"))
+                );
+                const scalar xWaveMaker
+                (
+                    waveProperties.getOrDefault<scalar>
+                    (
+                        "waveMakerPos",
+                        gMin(kDir & m.points())
+                    )
+                );
+                zSeabed_ = waveProperties.getOrDefault<scalar>
+                (
+                    "seabedHeight",
+                    gMin(up & m.points())
+                );
+                phase_ = waveProperties.getOrDefault<scalar>
+                (
+                    "phase",
+                    1.0 - wavePtr_->zeroPointPhase()
+                );
+
+                IFstream is(runTime.globalPath()/"system"/"lineLocations");
+                const dictionary lines(is);
+                const List<point> locations
+                (
+                    lines.get<List<point>>("lineLocations")
+                );
+
+                x_.resize(locations.size());
+                forAll(locations, i)
+                {
+                    x_[i] = (kDir & locations[i]) - xWaveMaker;
+                }
+
+                if (Pstream::master())
+                {
+                    const fileName dir
+                    (
+                        runTime.globalPath()/"postProcessing"/"exactSurface"
+                    );
+                    mkDir(dir);
+                    osPtr_.reset(new OFstream(dir/"exactSurface.dat"));
+                    osPtr_().precision(12);
+                    osPtr_() << "# Time";
+                    forAll(locations, i)
+                    {
+                        osPtr_() << tab << "z" << i;
+                    }
+                    osPtr_() << nl;
+                }
+            }
+
+            if (Pstream::master())
+            {
+                const scalarField eta
+                (
+                    wavePtr_->getEta(x_, runTime.value(), phase_)
+                );
+
+                osPtr_() << runTime.timeName();
+                forAll(eta, i)
+                {
+                    osPtr_() << tab << zSeabed_ + eta[i];
+                }
+                osPtr_() << endl;
+            }
+        #};
+    }
+
+    interfaceHeightCellPoint
+    {
+        type            interfaceHeight;
+        libs            (fieldFunctionObjects);
+        locations       $lineLocations;
+        alpha           alpha.water;
+        direction       (0 0 1);
+        writeControl    timeStep;
+        writeInterval   1;
+    }
+
+    interfaceHeightCell
+    {
+        $interfaceHeightCellPoint;
+        interpolationScheme cell;
+    }
+
+    surfacePositionPlic
+    {
+        type            surfacePosition;
+        libs            (surfacePosition);
+        locations       $lineLocations;
+        alpha           alpha.water;
+        direction       (0 0 1);
+        method          plic;
+        writeControl    timeStep;
+        writeInterval   1;
+    }
+
+    surfacePositionAlpha
+    {
+        $surfacePositionPlic;
+        method          alpha;
+    }
+}
+
+
+// ************************************************************************* //

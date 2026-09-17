@@ -1,0 +1,105 @@
+/*--------------------------------*- C++ -*----------------------------------*\
+  =========                 |
+  \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox
+   \\    /   O peration     |
+    \\  /    A nd           | www.openfoam.com
+     \\/     M anipulation  |
+\*---------------------------------------------------------------------------*/
+FoamFile
+{
+    version     2.0;
+    format      ascii;
+    class       dictionary;
+    location    "system";
+    object      controlDict;
+}
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+
+// Fixed time step; the step count, not the simulated time, matters for the
+// timing. All function objects run in the same run, and profiling gives the
+// time of each; the profiling is written with the fields, every writeInterval
+// steps, so that the first steps (line search) can be left out. endTime and
+// writeInterval are set by ../Allrun, and system/lineLocations is written by
+// ../makeLines.py.
+
+application     interIsoFoam;
+
+startFrom       startTime;
+
+startTime       0;
+
+stopAt          endTime;
+
+endTime         0.03;
+
+deltaT          0.002;
+
+writeControl    timeStep;
+
+writeInterval   5;
+
+purgeWrite      0;
+
+writeFormat     binary;
+
+writePrecision  12;
+
+writeCompression off;
+
+timeFormat      general;
+
+timePrecision   8;
+
+runTimeModifiable no;
+
+adjustTimeStep  no;
+
+maxCo           0.5;
+
+maxAlphaCo      0.5;
+
+maxDeltaT       1;
+
+#include "lineLocations"
+
+profiling
+{
+    active          true;
+    cpuInfo         false;
+    memInfo         false;
+    sysInfo         false;
+}
+
+functions
+{
+    surfacePosition1
+    {
+        type            surfacePosition;
+        libs            (surfacePosition);
+        locations       $lineLocations;
+        alpha           alpha.water;
+        direction       (0 0 1);
+        method          reconstructed;
+        writeControl    timeStep;
+        writeInterval   1;
+    }
+
+    surfacePositionPlic1
+    {
+        $surfacePosition1;
+        method          plic;
+    }
+
+    interfaceHeight1
+    {
+        type            interfaceHeight;
+        libs            (fieldFunctionObjects);
+        locations       $lineLocations;
+        alpha           alpha.water;
+        direction       (0 0 1);
+        writeControl    timeStep;
+        writeInterval   1;
+    }
+}
+
+// ************************************************************************* //

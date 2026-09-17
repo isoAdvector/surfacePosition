@@ -1,0 +1,37 @@
+#!/bin/bash
+cd "${0%/*}" || exit 1
+#------------------------------------------------------------------------------
+# Tests of the surfacePosition function object against interfaceHeight:
+#   waveAccuracy  exact stream function wave on coarse meshes, serial/parallel
+#   specialCases  interfaces and lines on faces, edges, processor and cyclic
+#                 patches, and locations outside the mesh
+#   movingMesh    adaptive refinement and solid body motion, serial/parallel
+#   largeTiming   cost in a 3D case on many processors (own cores)
+# Each test writes log.compare or log.timing with its summary.
+#------------------------------------------------------------------------------
+
+[ -n "$WM_PROJECT_DIR" ] || { echo "Source the OpenFOAM environment first" >&2; exit 1; }
+
+# largeTiming on the last NPROCS cores (default 18), the other tests on the
+# remaining cores, at the same time
+nProcs=${NPROCS:-18}
+cores=$(lscpu -p=CPU,CORE | grep -v '^#' | awk -F, '!seen[$2]++ {print $1}')
+nCores=$(echo "$cores" | wc -l)
+otherCores=$(echo "$cores" | head -n $((nCores - nProcs)) | paste -sd,)
+
+echo "=== largeTiming on the last $nProcs cores"
+NPROCS=$nProcs largeTiming/Allrun > largeTiming/log.Allrun 2>&1 &
+
+for test in waveAccuracy specialCases movingMesh
+do
+    echo "=== $test on cores $otherCores"
+    OMPI_MCA_hwloc_base_binding_policy=none taskset -c "$otherCores" \
+        "$test/Allrun" > "$test/log.Allrun" 2>&1 \
+     || echo "$test failed, see $test/log.Allrun" >&2
+done
+
+wait
+
+cat waveAccuracy/log.compare specialCases/log.check movingMesh/log.compare largeTiming/log.timing
+
+#------------------------------------------------------------------------------

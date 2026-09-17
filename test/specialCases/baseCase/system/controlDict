@@ -1,0 +1,234 @@
+/*--------------------------------*- C++ -*----------------------------------*\
+  =========                 |
+  \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox
+   \\    /   O peration     |
+    \\  /    A nd           | www.openfoam.com
+     \\/     M anipulation  |
+\*---------------------------------------------------------------------------*/
+FoamFile
+{
+    version     2.0;
+    format      ascii;
+    class       dictionary;
+    location    "system";
+    object      controlDict;
+}
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+
+// One very short time step: the reconstruction exists and nothing moves
+
+application     interIsoFoam;
+
+startFrom       startTime;
+
+startTime       0;
+
+stopAt          endTime;
+
+endTime         1e-6;
+
+deltaT          1e-6;
+
+writeControl    timeStep;
+
+writeInterval   100;
+
+purgeWrite      0;
+
+writeFormat     ascii;
+
+writePrecision  16;
+
+writeCompression off;
+
+timeFormat      general;
+
+timePrecision   8;
+
+runTimeModifiable no;
+
+adjustTimeStep  no;
+
+maxCo           0.5;
+
+maxAlphaCo      0.5;
+
+maxDeltaT       1;
+
+functions
+{
+    vertical_reconstructed
+    {
+        type            surfacePosition;
+        libs            (surfacePosition);
+        alpha           alpha.water;
+        method          reconstructed;
+        // Vertical lines through locations:
+        //  0 generic               1 on a face plane        2 on an edge
+        //  3 on a processor face   4 on a processor edge    5 on cyclic x = 0
+        //  6 on cyclic x = 1       7 cyclic/processor edge  8 far above
+        //  9 far below            10 outside the domain    11 cyclic/wall edge
+        locations
+        (
+            (0.33 0.47 0.5)
+            (0.3 0.47 0.5)
+            (0.3 0.4 0.5)
+            (0.5 0.47 0.5)
+            (0.5 0.5 0.5)
+            (0 0.47 0.5)
+            (1 0.47 0.5)
+            (0 0.5 0.5)
+            (0.33 0.47 50)
+            (0.33 0.47 -50)
+            (2 0.47 0.5)
+            (0 0 0.5)
+        );
+        direction       (0 0 1);
+        writeControl    timeStep;
+        writeInterval   1;
+    }
+
+    vertical_plic
+    {
+        type            surfacePosition;
+        libs            (surfacePosition);
+        alpha           alpha.water;
+        method          plic;
+        // Vertical lines through locations:
+        //  0 generic               1 on a face plane        2 on an edge
+        //  3 on a processor face   4 on a processor edge    5 on cyclic x = 0
+        //  6 on cyclic x = 1       7 cyclic/processor edge  8 far above
+        //  9 far below            10 outside the domain    11 cyclic/wall edge
+        locations
+        (
+            (0.33 0.47 0.5)
+            (0.3 0.47 0.5)
+            (0.3 0.4 0.5)
+            (0.5 0.47 0.5)
+            (0.5 0.5 0.5)
+            (0 0.47 0.5)
+            (1 0.47 0.5)
+            (0 0.5 0.5)
+            (0.33 0.47 50)
+            (0.33 0.47 -50)
+            (2 0.47 0.5)
+            (0 0 0.5)
+        );
+        direction       (0 0 1);
+        writeControl    timeStep;
+        writeInterval   1;
+    }
+
+    vertical_alpha
+    {
+        type            surfacePosition;
+        libs            (surfacePosition);
+        alpha           alpha.water;
+        method          alpha;
+        // Vertical lines through locations:
+        //  0 generic               1 on a face plane        2 on an edge
+        //  3 on a processor face   4 on a processor edge    5 on cyclic x = 0
+        //  6 on cyclic x = 1       7 cyclic/processor edge  8 far above
+        //  9 far below            10 outside the domain    11 cyclic/wall edge
+        locations
+        (
+            (0.33 0.47 0.5)
+            (0.3 0.47 0.5)
+            (0.3 0.4 0.5)
+            (0.5 0.47 0.5)
+            (0.5 0.5 0.5)
+            (0 0.47 0.5)
+            (1 0.47 0.5)
+            (0 0.5 0.5)
+            (0.33 0.47 50)
+            (0.33 0.47 -50)
+            (2 0.47 0.5)
+            (0 0 0.5)
+        );
+        direction       (0 0 1);
+        writeControl    timeStep;
+        writeInterval   1;
+    }
+
+    lines_reconstructed
+    {
+        type            surfacePosition;
+        libs            (surfacePosition);
+        alpha           alpha.water;
+        method          reconstructed;
+        // Explicit lines:
+        //  0 vertical from below   1 vertical from above
+        //  2 horizontal from x = -0.5 (enters through cyclic x = 0)
+        //  3 horizontal from x = 0.25 (inside the domain)
+        //  4 horizontal from x = 1.5 backwards (enters through cyclic x = 1)
+        //  5 vertical at x = 0.25 from above
+        lines
+        (
+            ((0.33 0.47 -3) (0.33 0.47 3))
+            ((0.33 0.47 3) (0.33 0.47 -3))
+            ((-0.5 0.47 0.37) (1.5 0.47 0.37))
+            ((0.25 0.47 0.37) (1.5 0.47 0.37))
+            ((1.5 0.47 0.37) (-0.5 0.47 0.37))
+            ((0.25 0.47 3) (0.25 0.47 -3))
+        );
+        writeControl    timeStep;
+        writeInterval   1;
+    }
+
+    lines_plic
+    {
+        type            surfacePosition;
+        libs            (surfacePosition);
+        alpha           alpha.water;
+        method          plic;
+        // Explicit lines:
+        //  0 vertical from below   1 vertical from above
+        //  2 horizontal from x = -0.5 (enters through cyclic x = 0)
+        //  3 horizontal from x = 0.25 (inside the domain)
+        //  4 horizontal from x = 1.5 backwards (enters through cyclic x = 1)
+        //  5 vertical at x = 0.25 from above
+        lines
+        (
+            ((0.33 0.47 -3) (0.33 0.47 3))
+            ((0.33 0.47 3) (0.33 0.47 -3))
+            ((-0.5 0.47 0.37) (1.5 0.47 0.37))
+            ((0.25 0.47 0.37) (1.5 0.47 0.37))
+            ((1.5 0.47 0.37) (-0.5 0.47 0.37))
+            ((0.25 0.47 3) (0.25 0.47 -3))
+        );
+        writeControl    timeStep;
+        writeInterval   1;
+    }
+
+    vertical_interfaceHeight
+    {
+        type            interfaceHeight;
+        libs            (fieldFunctionObjects);
+        alpha           alpha.water;
+        // Vertical lines through locations:
+        //  0 generic               1 on a face plane        2 on an edge
+        //  3 on a processor face   4 on a processor edge    5 on cyclic x = 0
+        //  6 on cyclic x = 1       7 cyclic/processor edge  8 far above
+        //  9 far below            10 outside the domain    11 cyclic/wall edge
+        locations
+        (
+            (0.33 0.47 0.5)
+            (0.3 0.47 0.5)
+            (0.3 0.4 0.5)
+            (0.5 0.47 0.5)
+            (0.5 0.5 0.5)
+            (0 0.47 0.5)
+            (1 0.47 0.5)
+            (0 0.5 0.5)
+            (0.33 0.47 50)
+            (0.33 0.47 -50)
+            (2 0.47 0.5)
+            (0 0 0.5)
+        );
+        direction       (0 0 1);
+        writeControl    timeStep;
+        writeInterval   1;
+    }
+}
+
+// ************************************************************************* //

@@ -1,0 +1,45 @@
+#!/bin/bash
+cd "${0%/*}" || exit 1
+. ${WM_PROJECT_DIR:?}/bin/tools/RunFunctions        # Tutorial run functions
+#------------------------------------------------------------------------------
+# Special cases for surfacePosition: interfaces and lines on faces, edges and
+# points of the mesh, on processor and cyclic faces, and line locations
+# outside the mesh. One short interIsoFoam step per scenario, in serial and
+# on 8 processors, checked against the exact positions by check.py.
+#------------------------------------------------------------------------------
+
+# name origin normal (water on the side the normal points to)
+scenarios="flat537 (0 0 0.537) (0 0 -1)
+flat500 (0 0 0.5) (0 0 -1)
+flat300 (0 0 0.3) (0 0 -1)
+slab (0.5 0 0) (-1 0 0)"
+
+names=""
+while read -r name ox oy oz nx ny nz
+do
+    names="$names $name"
+    rm -rf "$name" "${name}_parallel"
+    cp -r baseCase "$name"
+    sed -i "s/ORIGIN/$ox $oy $oz/; s/NORMAL/$nx $ny $nz/" "$name/system/setAlphaFieldDict"
+
+    (
+        cd "$name" || exit 1
+        cp -r 0.orig 0
+        runApplication blockMesh
+        runApplication setAlphaField
+    )
+
+    cp -r "$name" "${name}_parallel"
+
+    ( cd "$name" && runApplication interIsoFoam )
+    (
+        cd "${name}_parallel" || exit 1
+        runApplication decomposePar -cellDist
+        runParallel interIsoFoam
+    )
+done <<< "$scenarios"
+
+python3 check.py $names | tee log.check
+exit "${PIPESTATUS[0]}"
+
+#------------------------------------------------------------------------------

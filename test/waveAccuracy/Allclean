@@ -1,0 +1,6 @@
+#!/bin/sh
+cd "${0%/*}" || exit 1
+
+rm -rf coarse coarse_parallel medium medium_parallel log.compare results.json
+
+#------------------------------------------------------------------------------

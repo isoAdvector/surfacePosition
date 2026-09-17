@@ -1,0 +1,6 @@
+#!/bin/sh
+cd "${0%/*}" || exit 1
+
+rm -rf amr amr_parallel motion motion_parallel log.compare results.json
+
+#------------------------------------------------------------------------------

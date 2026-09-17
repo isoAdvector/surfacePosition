@@ -1,0 +1,68 @@
+#!/bin/bash
+cd "${0%/*}" || exit 1
+. ${WM_PROJECT_DIR:?}/bin/tools/RunFunctions        # Tutorial run functions
+#------------------------------------------------------------------------------
+# Cost of surfacePosition and interfaceHeight in a large parallel case: a 3D
+# standing wave in a closed cube (default 100^3 cells) on many processors,
+# sampled along 50 lines. One run with surfacePosition (reconstructed and
+# plic) and interfaceHeight; OpenFOAM's profiling gives the time of each
+# function object and of the flow solution, from the fields written after
+# NSKIP steps (start-up and line search) to the end of the run.
+#
+# Environment variables:
+#   NPROCS   number of processes (default 18)
+#   NCELLS   cells per direction (default 100)
+#   NSKIP    time steps left out at the start (default 5)
+#   NSTEPS   time steps timed after these (default 10)
+#   CPUSET   cores for the processes (default: the last NPROCS cores), so that
+#            other jobs can run on the remaining cores
+#
+# The processes are bound to one core each through a rank file and allocate
+# memory on their own NUMA node, set through Open MPI environment variables
+# (runParallel takes no mpirun options). The local memory policy also makes
+# the kernel free page cache on the node instead of allocating remote memory.
+# A cpu set cannot be used instead of the rank file: Open MPI 4.1 then binds
+# every process to the whole set, and rejects it together with a mapping
+# policy.
+#------------------------------------------------------------------------------
+
+nProcs=${NPROCS:-18}
+nCells=${NCELLS:-100}
+nSkip=${NSKIP:-5}
+nSteps=${NSTEPS:-10}
+nCores=$(lscpu -p=CORE | grep -v '^#' | sort -un | wc -l)
+cpuSet=${CPUSET:-$(lscpu -p=CPU,CORE | grep -v '^#' | awk -F, '!seen[$2]++ {print $1}' \
+    | tail -n "$nProcs" | paste -sd,)}
+
+echo "$nProcs processes on cores $cpuSet (of $nCores), $nCells^3 cells," \
+     "$nSkip + $nSteps steps"
+
+rm -rf case
+cp -r baseCase case
+
+echo "$cpuSet" | tr , '\n' | awk '{print "rank " NR-1 "=localhost slot=" $1}' > case/rankFile
+export OMPI_MCA_rmaps_rank_file_path="$PWD/case/rankFile"
+export OMPI_MCA_rmaps_rank_file_physical=true
+export OMPI_MCA_hwloc_base_mem_alloc_policy=local_only
+
+foamDictionary -entry numberOfSubdomains -set "$nProcs" case/system/decomposeParDict > /dev/null
+# Plain text edits: foamDictionary would write the dictionaries with the
+# variables expanded. Fields (and profiling) are written after nSkip steps
+# and at the end.
+deltaT=$(sed -n 's/^deltaT *\([^;]*\);/\1/p' case/system/controlDict)
+sed -i "s/^n .*/n   $nCells;/" case/system/blockMeshDict
+sed -i "s/^endTime .*/endTime         $(echo "($nSkip + $nSteps)*$deltaT" | bc -l);/" case/system/controlDict
+sed -i "s/^writeInterval .*/writeInterval   $nSkip;/" case/system/controlDict
+python3 makeLines.py case
+
+cd case || exit 1
+cp -r 0.orig 0
+runApplication blockMesh
+runApplication setAlphaField
+runApplication decomposePar -cellDist
+runParallel "$(foamDictionary -entry application -value system/controlDict)"
+
+cd ..
+python3 timing.py case | tee log.timing
+
+#------------------------------------------------------------------------------
