@@ -19,9 +19,9 @@ geometrically with the isosurface of the volume fraction.
 This README is a Markdown version of the report
 [test/report/report.pdf](test/report/report.pdf) on the implementation and the
 test suite in [test](test). All numbers, tables and figures are generated from
-the output of one run of the suite (wall time 1 min 41 s). In a
+the output of one run of the suite (wall time 1 min 44 s). In a
 1 000 000-cell case on 18 processors, `surfacePosition` costs
-5.6 ms per time step for 50 lines, against 1299 ms
+4.5 ms per time step for 50 lines, against 1256 ms
 for `interfaceHeight`; on the exact stream function wave it is more accurate
 than `interfaceHeight` on the same mesh, and it is exact for flat interfaces,
 also on faces and processor boundaries.
@@ -52,6 +52,7 @@ surfacePosition1
     alpha           alpha.water;    // default alpha
     liquid          true;           // alpha is the liquid's
     direction       (0 0 -1);       // downwards, default gravity
+    mode            accumulated;    // accumulated, highest or lowest
     surfCellTol     1e-8;           // interface cells
     isoFaceTol      1e-8;           // tolerance of the isosurface cut
     checkLineCells  false;          // tests: compare line cells with all cells
@@ -61,12 +62,24 @@ surfacePosition1
 
 The `interfaceHeight` entry `interpolationScheme` is not used. The files
 `height.dat` and `position.dat` in `postProcessing/<name>/<time>` hold, per
-location, the height $h_B$ of the liquid above the lower boundary, where the
-line leaves the mesh along the direction, the height $h_L = h_B - h_{LB}$ of the
-interface above the location, where $h_{LB}$ is the height of the location
-above the lower boundary, and the position of the interface, the location moved
-by $h_L$ against the direction. As in `interfaceHeight`, a dry line gives
+location, the height $h_B$ of the liquid (in the mode, below) above the lower
+boundary, where the line leaves the mesh along the direction, the height
+$h_L = h_B - h_{LB}$ of the interface above the location, where $h_{LB}$ is the
+height of the location above the lower boundary, and the position of the
+interface, the location moved by $h_L$ against the direction. As in `interfaceHeight`, a dry line gives
 $h_B = 0$, and a line missing the mesh $h_B = 0$ and $h_L$ = GREAT (10¹⁵).
+
+The `mode` sets which height is reported:
+
+- `accumulated` (default): the length of the line in the liquid, as in
+  `interfaceHeight`;
+- `highest`: the top of the highest liquid along the line, e.g. including
+  droplets above the surface;
+- `lowest`: the top of the lowest liquid part, the first transition from liquid
+  to gas going up the line.
+
+The headers of both files state the mode in a comment line
+(`# Mode : accumulated`), so the columns are unchanged.
 
 ## 2. Implementation
 
@@ -171,6 +184,12 @@ boundary being the end of the last covered piece. A sharp interface on a face,
 as set by `setFields`, needs no special treatment, and droplets or bubbles
 shift the height only by their volume along the line.
 
+For the modes `highest` and `lowest`, the line is divided at the ends of the
+pieces and of the liquid parts, and an interval is in the liquid if at least
+half of the cells covering it are. The top of the first liquid interval from
+above gives the highest point, and the top of the last run of liquid intervals
+the top of the lowest liquid part.
+
 ## 3. Test suite
 
 The suite (`test/Allrun`) runs four tests, each with a summary log and a
@@ -254,19 +273,22 @@ cell centre and 2 % of a cell width from a face.*
 
 ### 3.2 Special cases
 
-A closed 10×10×10 cube, cyclic in x, decomposed into 8 subdomains, holds either
-a flat interface (z = 0.537 inside cells, z = 0.5 on internal and processor
-faces, z = 0.3 on internal faces) or a vertical slab of water (x < 0.5), whose
-interfaces lie on the cyclic and the processor faces. After one short
+A closed 10×10×10 cube, cyclic in x, decomposed into 8 subdomains, holds a flat
+interface (z = 0.537 inside cells, z = 0.5 on internal and processor faces,
+z = 0.3 on internal faces), a vertical slab of water (x < 0.5), whose
+interfaces lie on the cyclic and the processor faces, or two layers of water,
+below z = 0.35 and at 0.6 < z < 0.75 with a sharp lower interface. After one short
 `interIsoFoam` step, twelve vertical lines (figure 3) test locations in a cell,
 on a face plane, on an edge, on a processor face and edge, on the cyclic
 patches, on a cyclic/processor edge and a cyclic/wall edge, far above and far
-below the mesh, and outside the domain. The heights and positions are compared
-with the exact values: for the flat interfaces h<sub>B</sub> = z on all lines
-crossing the mesh; for the slab h<sub>B</sub> = 1 for x < 0.5, 0 for x > 0.5,
-and 0.5 on the processor faces at x = 0.5, where a full and an empty cell are
-averaged; and the marker of a line missing the mesh for the line outside the
-domain.
+below the mesh, and outside the domain, with `surfacePosition` in its three
+modes. The heights and positions are compared with the exact values: for the
+flat interfaces h<sub>B</sub> = z in all modes on all lines crossing the mesh;
+for the slab h<sub>B</sub> = 1 for x < 0.5, 0 for x > 0.5, and on the processor
+faces at x = 0.5, where a full and an empty cell meet, 0.5 accumulated and 1 in
+the other modes; for the layers h<sub>B</sub> = 0.5 accumulated, 0.75 highest
+and 0.35 lowest; and the marker of a line missing the mesh for the line outside
+the domain.
 
 | Flat interface at z = 0.5 | Vertical slab of water |
 |:---:|:---:|
@@ -277,23 +299,25 @@ vertical lines through the locations (red; the line on the right is outside the
 domain) and the positions found by `surfacePosition`.*
 
 *Table 2: Largest error of the heights h<sub>B</sub>, h<sub>L</sub> and
-positions of `surfacePosition` against the exact values [m], over the lines
-crossing the mesh (tolerance 1·10⁻⁸ m), and the number of lines
-correctly reported as missing the mesh.*
+positions of `surfacePosition` in its three modes against the exact values [m],
+over the lines crossing the mesh (tolerance 1·10⁻⁸ m), and the number of
+lines correctly reported as missing the mesh.*
 
-| Scenario | Proc. | largest error | lines missing the mesh |
-|---|---:|---:|---:|
-| flat, z=0.537 | 1 | 1·10⁻¹⁵ | 1 |
-|  | 8 | 1·10⁻¹⁵ | 1 |
-| flat, z=0.5 | 1 | 0 | 1 |
-|  | 8 | 0 | 1 |
-| flat, z=0.3 | 1 | 2.8·10⁻¹⁵ | 1 |
-|  | 8 | 2.8·10⁻¹⁵ | 1 |
-| vertical slab | 1 | 2.2·10⁻¹⁶ | 1 |
-|  | 8 | 2.2·10⁻¹⁶ | 1 |
+| Scenario | Proc. | accumulated | highest | lowest | off mesh |
+|---|---:|---:|---:|---:|---:|
+| flat, z=0.537 | 1 | 1·10⁻¹⁵ | 1·10⁻¹⁵ | 1·10⁻¹⁵ | 1 |
+|  | 8 | 1·10⁻¹⁵ | 1·10⁻¹⁵ | 1·10⁻¹⁵ | 1 |
+| flat, z=0.5 | 1 | 0 | 0 | 0 | 1 |
+|  | 8 | 0 | 0 | 0 | 1 |
+| flat, z=0.3 | 1 | 2.8·10⁻¹⁵ | 2.8·10⁻¹⁵ | 2.8·10⁻¹⁵ | 1 |
+|  | 8 | 2.8·10⁻¹⁵ | 2.8·10⁻¹⁵ | 2.8·10⁻¹⁵ | 1 |
+| vertical slab | 1 | 2.2·10⁻¹⁶ | 2.2·10⁻¹⁶ | 2.2·10⁻¹⁶ | 1 |
+|  | 8 | 2.2·10⁻¹⁶ | 2.2·10⁻¹⁶ | 2.2·10⁻¹⁶ | 1 |
+| two layers | 1 | 0 | 0 | 1.4·10⁻¹⁵ | 1 |
+|  | 8 | 2.2·10⁻¹⁶ | 2.2·10⁻¹⁶ | 1.4·10⁻¹⁵ | 1 |
 
-All heights and positions are exact to round-off (table 2), in serial and on 8
-processors, including the interfaces on processor and cyclic faces and the
+All heights and positions are exact to round-off in all modes (table 2), in
+serial and on 8 processors, including the interfaces on processor and cyclic faces and the
 lines on faces, edges and patches. Table 3 shows h<sub>B</sub> of
 `interfaceHeight` on some of the lines. On 8 processors, the lines on processor
 faces and edges count the water of the cells on all sides; on the cyclic
@@ -386,15 +410,15 @@ of the first steps beyond the steady cost (the line search), in ms.*
 
 | | per step | per line | range | start-up |
 |---|---:|---:|---:|---:|
-| flow solution (`interIsoFoam`) | 752.4 |  | 1.90 |  |
-| `surfacePosition` | 5.6 | 0.112 | 2.16 | 1140 |
-| `interfaceHeight` | 1299.1 | 25.982 | 0.89 |  |
+| flow solution (`interIsoFoam`) | 739.4 |  | 1.41 |  |
+| `surfacePosition` | 4.5 | 0.090 | 1.77 | 1132 |
+| `interfaceHeight` | 1256.2 | 25.124 | 0.70 |  |
 
-`surfacePosition` costs 5.6 ms per step, 0.7 % of the
+`surfacePosition` costs 4.5 ms per step, 0.6 % of the
 flow solution, including the interpolation of α to the mesh points, while
-`interfaceHeight` costs 1299 ms, 173 % of the flow
-solution and 231 times as much as `surfacePosition` (table 5). The
-initial line search of `surfacePosition` takes about 1140 ms once.
+`interfaceHeight` costs 1256 ms, 170 % of the flow
+solution and 280 times as much as `surfacePosition` (table 5). The
+initial line search of `surfacePosition` takes about 1132 ms once.
 The heights of `surfacePosition` and `interfaceHeight` agree to
 0.123 mm (rms 0.026 mm).
 
@@ -450,4 +474,4 @@ cd report
 the `postProcessing` data of the cases; `makeFigures.py` renders the figures
 from the case data with ParaView; `makeReadme.py` writes this README from
 `test/report/README.md.in`. The report and this README were generated from the
-run of 2026-09-17 11:26 (source and tests at revision `24e2265`).
+run of 2026-09-17 11:49 (source and tests at revision `63c9f6f`).

@@ -78,6 +78,7 @@ surfacePosition1
     alpha           alpha.water;    // default alpha
     liquid          true;           // alpha is the liquid's
     direction       (0 0 -1);       // downwards, default gravity
+    mode            accumulated;    // accumulated, highest or lowest
     surfCellTol     1e-8;           // interface cells
     isoFaceTol      1e-8;           // tolerance of the isosurface cut
     checkLineCells  false;          // tests: compare line cells with all cells
@@ -86,13 +87,19 @@ surfacePosition1
 \end{lstlisting}
 The \iH{} entry \texttt{interpolationScheme} is not used. The files
 \texttt{height.dat} and \texttt{position.dat} in
-\texttt{postProcessing/<name>/<time>} hold, per location, the height $h_B$ of the liquid above the lower boundary,
-where the line leaves the mesh along the direction, the height
+\texttt{postProcessing/<name>/<time>} hold, per location, the height $h_B$ of the liquid (in the mode, below) above
+the lower boundary, where the line leaves the mesh along the direction, the height
 $h_L = h_B - h_{LB}$ of the interface above the location, where $h_{LB}$ is the
 height of the location above the lower boundary, and the position of the
 interface, the location moved by $h_L$ against the direction. As in \iH{}, a
 dry line gives $h_B = 0$, and a line missing the mesh $h_B = 0$ and
-$h_L = \mathrm{GREAT}$ ($10^{15}$).
+$h_L = \mathrm{GREAT}$ ($10^{15}$). The \texttt{mode} sets which height is
+reported: \texttt{accumulated} (default), the length of the line in the liquid
+as in \iH{}; \texttt{highest}, the top of the highest liquid along the line,
+e.g.\ including droplets above the surface; or \texttt{lowest}, the top of the
+lowest liquid part, the first transition from liquid to gas going up the line.
+The headers of both files state the mode in a comment line
+(\texttt{\# Mode : accumulated}), so the columns are unchanged.
 
 % --------------------------------------------------------------------------- %
 \section{Implementation}
@@ -197,6 +204,12 @@ end of the last covered piece. A sharp interface on a face, as set by
 \texttt{setFields}, needs no special treatment, and droplets or bubbles shift
 the height only by their volume along the line.
 
+For the modes \texttt{highest} and \texttt{lowest}, the line is divided at the
+ends of the pieces and of the liquid parts, and an interval is in the liquid
+if at least half of the cells covering it are. The top of the first liquid
+interval from above gives the highest point, and the top of the last run of
+liquid intervals the top of the lowest liquid part.
+
 % --------------------------------------------------------------------------- %
 \section{Test suite}
 \label{sec:tests}
@@ -297,18 +310,21 @@ serial and parallel results \waveParallel.
 \subsection{Special cases}
 
 A closed $10\times10\times10$ cube, cyclic in $x$, decomposed into 8
-subdomains, holds either a flat interface ($z = 0.537$ inside cells,
-$z = 0.5$ on internal and processor faces, $z = 0.3$ on internal faces) or a
+subdomains, holds a flat interface ($z = 0.537$ inside cells,
+$z = 0.5$ on internal and processor faces, $z = 0.3$ on internal faces), a
 vertical slab of water ($x < 0.5$), whose interfaces lie on the cyclic and the
-processor faces. After one short \texttt{interIsoFoam} step, twelve vertical
+processor faces, or two layers of water, below $z = 0.35$ and at
+$0.6 < z < 0.75$ with a sharp lower interface. After one short \texttt{interIsoFoam} step, twelve vertical
 lines (fig.~\ref{fig:special}) test locations in a cell, on a face plane, on
 an edge, on a processor face and edge, on the cyclic patches, on a
 cyclic/processor edge and a cyclic/wall edge, far above and far below the
-mesh, and outside the domain. The heights and positions are compared with the
-exact values: for the flat interfaces $h_B = z$ on all lines crossing the
-mesh; for the slab $h_B = 1$ for $x < 0.5$, 0 for $x > 0.5$, and 0.5 on the
-processor faces at $x = 0.5$, where a full and an empty cell are averaged; and
-the marker of a line missing the mesh for the line outside the domain.
+mesh, and outside the domain, with \sP{} in its three modes. The heights and
+positions are compared with the exact values: for the flat interfaces
+$h_B = z$ in all modes on all lines crossing the mesh; for the slab $h_B = 1$
+for $x < 0.5$, 0 for $x > 0.5$, and on the processor faces at $x = 0.5$, where
+a full and an empty cell meet, 0.5 accumulated and 1 in the other modes; for
+the layers $h_B = 0.5$ accumulated, 0.75 highest and 0.35 lowest; and the
+marker of a line missing the mesh for the line outside the domain.
 
 \begin{figure}[!htbp]
   \centering
@@ -330,21 +346,21 @@ the marker of a line missing the mesh for the line outside the domain.
 \begin{table}[!htbp]
   \centering
   \caption{Largest error of the heights $h_B$, $h_L$ and positions of \sP{}
-    against the exact values [m], over the lines crossing the mesh (tolerance
-    \specialTol{}\,m), and the number of lines correctly reported as missing
-    the mesh.}
+    in its three modes against the exact values [m], over the lines crossing
+    the mesh (tolerance \specialTol{}\,m), and the number of lines correctly
+    reported as missing the mesh.}
   \label{tab:special}
-  \begin{tabular}{llcc}
+  \begin{tabular}{llcccc}
     \toprule
-    Scenario & Proc. & largest error & lines missing the mesh \\
+    Scenario & Proc. & accumulated & highest & lowest & off mesh \\
     \midrule
     \inputrows{generated/tabSpecial.tex}
     \bottomrule
   \end{tabular}
 \end{table}
 
-All heights and positions are exact to round-off (table~\ref{tab:special}), in
-serial and on 8 processors, including the interfaces on processor and cyclic
+All heights and positions are exact to round-off in all modes
+(table~\ref{tab:special}), in serial and on 8 processors, including the interfaces on processor and cyclic
 faces and the lines on faces, edges and patches. Table~\ref{tab:specialIH}
 shows $h_B$ of \iH{} on some of the lines. On 8 processors, the lines on
 processor faces and edges count the water of the cells on all sides; on the

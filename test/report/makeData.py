@@ -162,14 +162,18 @@ for line, name in ((6, "A"), (8, "B")):
 special = load("specialCases")
 rows = []
 for scenario, label in (("flat537", r"flat, $z=0.537$"), ("flat500", r"flat, $z=0.5$"),
-                        ("flat300", r"flat, $z=0.3$"), ("slab", "vertical slab")):
+                        ("flat300", r"flat, $z=0.3$"), ("slab", "vertical slab"),
+                        ("layers", "two layers")):
     for run, procs in ((scenario, "1"), (scenario + "_parallel", "8")):
-        st = special["runs"][run]["checks"]["surfacePosition"]
-        err = num(st["maxError"], 2) if st["maxError"] > 0 else "0"
-        rows.append([label if procs == "1" else "", procs,
-                     err if not st["failed"] else r"\textbf{failed}",
-                     str(st["missing"])])
-table("tabSpecial", rows, 4)
+        checks = special["runs"][run]["checks"]
+        cells = []
+        for mode in ("accumulated", "highest", "lowest"):
+            st = checks[mode]
+            err = num(st["maxError"], 2) if st["maxError"] > 0 else "0"
+            cells.append(err if not st["failed"] else r"\textbf{failed}")
+        rows.append([label if procs == "1" else "", procs] + cells
+                    + [str(checks["accumulated"]["missing"])])
+table("tabSpecial", rows, 6)
 macro("specialPassed", "passed" if special["passed"] else "FAILED")
 macro("specialTol", num(special["tol"]))
 
