@@ -30,6 +30,18 @@ namespace functionObjects
 }
 
 
+const Foam::Enum
+<
+    Foam::functionObjects::surfacePosition::modeType
+>
+Foam::functionObjects::surfacePosition::modeTypeNames_
+({
+    { modeType::ACCUMULATED, "accumulated" },
+    { modeType::HIGHEST, "highest" },
+    { modeType::LOWEST, "lowest" },
+});
+
+
 
 // * * * * * * * * * * * * * Private Member Functions  * * * * * * * * * * * //
 
@@ -780,17 +792,18 @@ void Foam::functionObjects::surfacePosition::liquidParts
 }
 
 
-void Foam::functionObjects::surfacePosition::lengths
+void Foam::functionObjects::surfacePosition::lineHeight
 (
     const label li,
     const UList<List<List<Pair<scalar>>>>& allParts,
-    scalar& liquidLength,
+    scalar& height,
     scalar& meshLength
 ) const
 {
     const scalarList& breaks = breaks_[li];
     const labelList& cover = cover_[li];
 
+    height = 0;
     meshLength = 0;
     forAll(cover, j)
     {
@@ -800,34 +813,125 @@ void Foam::functionObjects::surfacePosition::lengths
         }
     }
 
-    // Each liquid part adds its overlap with each part of the line divided
-    // by the number of cells covering that part
-    liquidLength = 0;
+    if (meshLength <= 0)
+    {
+        return;
+    }
+
+    if (mode_ == modeType::ACCUMULATED)
+    {
+        // Each part in the alpha phase adds its overlap with each piece of
+        // the line divided by the number of cells covering that piece
+        scalar alphaLength = 0;
+
+        for (const auto& proc : allParts)
+        {
+            for (const Pair<scalar>& part : proc[li])
+            {
+                label j = max(findLower(breaks, part.first()), 0);
+
+                for (; j < cover.size() && breaks[j] < part.second(); ++j)
+                {
+                    if (cover[j])
+                    {
+                        const scalar overlap =
+                            min(part.second(), breaks[j + 1])
+                          - max(part.first(), breaks[j]);
+
+                        if (overlap > 0)
+                        {
+                            alphaLength += overlap/cover[j];
+                        }
+                    }
+                }
+            }
+        }
+
+        alphaLength = min(alphaLength, meshLength);
+        height = liquid_ ? alphaLength : meshLength - alphaLength;
+        return;
+    }
+
+    // Highest or lowest: the line is divided at the ends of the pieces and of
+    // the parts in the alpha phase. Each interval is in the liquid if at least
+    // half of the cells covering it are. Sweeping down the line (increasing
+    // s), the number of alpha parts covering an interval is updated from the
+    // part ends.
+    DynamicList<scalar> ends(breaks);
+    DynamicList<Pair<scalar>> events;   // (s, +1 or -1)
 
     for (const auto& proc : allParts)
     {
         for (const Pair<scalar>& part : proc[li])
         {
-            label j = max(findLower(breaks, part.first()), 0);
-
-            for (; j < cover.size() && breaks[j] < part.second(); ++j)
-            {
-                if (cover[j])
-                {
-                    const scalar overlap =
-                        min(part.second(), breaks[j + 1])
-                      - max(part.first(), breaks[j]);
-
-                    if (overlap > 0)
-                    {
-                        liquidLength += overlap/cover[j];
-                    }
-                }
-            }
+            ends.push_back(part.first());
+            ends.push_back(part.second());
+            events.push_back(Pair<scalar>(part.first(), 1));
+            events.push_back(Pair<scalar>(part.second(), -1));
         }
     }
 
-    liquidLength = min(liquidLength, meshLength);
+    Foam::sort(ends);
+    Foam::sort
+    (
+        events,
+        [](const Pair<scalar>& x, const Pair<scalar>& y)
+        {
+            return x.first() < y.first();
+        }
+    );
+
+    const scalar sLow = breaks.last();
+    scalar sTopFirst = -1;     // Top of the highest liquid run
+    scalar sTopLast = -1;      // Top of the lowest liquid run
+    bool inLiquid = false;
+    label nAlpha = 0;
+    label ei = 0;
+
+    for (label i = 0; i + 1 < ends.size(); ++i)
+    {
+        const scalar s0 = ends[i];
+        const scalar s1 = ends[i + 1];
+
+        while (ei < events.size() && events[ei].first() <= s0)
+        {
+            nAlpha += label(events[ei].second());
+            ++ei;
+        }
+
+        if (s1 <= s0)
+        {
+            continue;
+        }
+
+        const label j = findLower(breaks, 0.5*(s0 + s1));
+        const label n = (j >= 0 && j < cover.size()) ? cover[j] : 0;
+
+        bool liquid = false;
+        if (n > 0)
+        {
+            const label nLiquid = liquid_ ? nAlpha : n - nAlpha;
+            liquid = (2*nLiquid >= n);
+        }
+
+        if (liquid && !inLiquid)
+        {
+            if (sTopFirst < 0)
+            {
+                sTopFirst = s0;
+            }
+            sTopLast = s0;
+        }
+        inLiquid = liquid;
+    }
+
+    const scalar sTop =
+        (mode_ == modeType::HIGHEST) ? sTopFirst : sTopLast;
+
+    if (sTop >= 0)
+    {
+        height = sLow - sTop;
+    }
 }
 
 
@@ -836,7 +940,7 @@ void Foam::functionObjects::surfacePosition::writeFileHeader
     const fileID fid
 )
 {
-    // As interfaceHeight
+    // As interfaceHeight, with the mode
     forAll(locations_, li)
     {
         writeHeaderValue
@@ -846,6 +950,8 @@ void Foam::functionObjects::surfacePosition::writeFileHeader
             locations_[li]
         );
     }
+
+    writeHeaderValue(files(label(fid)), "Mode", modeTypeNames_[mode_]);
 
     switch (fid)
     {
@@ -954,9 +1060,9 @@ void Foam::functionObjects::surfacePosition::writePositions()
 
     for (label li = 0; li < nLines; ++li)
     {
-        scalar liquidLength = 0;
+        scalar height = 0;
         scalar meshLength = 0;
-        lengths(li, allParts, liquidLength, meshLength);
+        lineHeight(li, allParts, height, meshLength);
 
         // Height of the location above the lower boundary, where the line
         // leaves the mesh (as interfaceHeight: -GREAT if it misses the mesh)
@@ -969,7 +1075,7 @@ void Foam::functionObjects::surfacePosition::writePositions()
         }
 
         // Interface heights above the boundary and location
-        const scalar hIB = liquid_ ? liquidLength : meshLength - liquidLength;
+        const scalar hIB = height;
         const scalar hIL = hIB - hLB;
 
         // Position of the interface
@@ -1001,6 +1107,7 @@ Foam::functionObjects::surfacePosition::surfacePosition
     logFiles(obr_, name),
     alphaName_("alpha"),
     liquid_(true),
+    mode_(modeType::ACCUMULATED),
     direction_(Zero),
     locations_(),
     surfCellTol_(1e-8),
@@ -1051,6 +1158,7 @@ bool Foam::functionObjects::surfacePosition::read(const dictionary& dict)
 
     alphaName_ = dict.getOrDefault<word>("alpha", "alpha");
     liquid_ = dict.getOrDefault("liquid", true);
+    mode_ = modeTypeNames_.getOrDefault("mode", dict, modeType::ACCUMULATED);
     dict.readEntry("locations", locations_);
     direction_ = dict.getOrDefault<vector>("direction", Zero);
     surfCellTol_ = dict.getOrDefault<scalar>("surfCellTol", 1e-8);

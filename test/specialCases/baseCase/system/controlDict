@@ -87,6 +87,18 @@ functions
         writeInterval   1;
     }
 
+    vertical_highest
+    {
+        $vertical;
+        mode            highest;
+    }
+
+    vertical_lowest
+    {
+        $vertical;
+        mode            lowest;
+    }
+
     vertical_interfaceHeight
     {
         type            interfaceHeight;

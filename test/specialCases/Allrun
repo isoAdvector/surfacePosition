@@ -8,11 +8,13 @@ cd "${0%/*}" || exit 1
 # on 8 processors, checked against the exact positions by check.py.
 #------------------------------------------------------------------------------
 
-# name origin normal (water on the side the normal points to)
+# name origin normal (water on the side the normal points to); layers adds a
+# layer of water at 0.6 < z < 0.75 above the water below z = 0.35
 scenarios="flat537 (0 0 0.537) (0 0 -1)
 flat500 (0 0 0.5) (0 0 -1)
 flat300 (0 0 0.3) (0 0 -1)
-slab (0.5 0 0) (-1 0 0)"
+slab (0.5 0 0) (-1 0 0)
+layers (0 0 0.35) (0 0 -1)"
 
 names=""
 while read -r name ox oy oz nx ny nz
@@ -27,6 +29,10 @@ do
         cp -r 0.orig 0
         runApplication blockMesh
         runApplication setAlphaField
+        if [ "$name" = layers ]
+        then
+            python3 ../addLayer.py || exit 1
+        fi
     )
 
     cp -r "$name" "${name}_parallel"

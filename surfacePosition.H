@@ -26,8 +26,18 @@ Description
     reconstruction). Where several cells cover the same part of the line (a
     line in a face plane or on an edge), their liquid lengths are averaged.
 
+    The mode sets which height is reported:
+    - accumulated (default): the length of the line in the liquid, as
+      interfaceHeight;
+    - highest: the height of the highest point of the liquid along the line,
+      e.g. including droplets above the surface;
+    - lowest: the height of the top of the lowest liquid part along the line,
+      i.e. the first transition from liquid to gas going up the line.
+    For highest and lowest, a part of the line covered by several cells is in
+    the liquid if at least half of them are.
+
     Written, as by interfaceHeight, for each location:
-    - hB: the height of the liquid above the lower boundary, i.e. where the
+    - hB: the height (of the mode) above the lower boundary, i.e. where the
       line leaves the mesh along the direction
     - hL: the height of the interface above the location, hB minus the
       height of the location above the lower boundary
@@ -61,6 +71,7 @@ Usage
         direction       (0 0 -1);       // default: gravity
 
         // Optional entries
+        mode            accumulated;    // accumulated, highest or lowest
         surfCellTol     1e-8;           // interface cells
         isoFaceTol      1e-8;           // tolerance of the isosurface cut
 
@@ -76,6 +87,7 @@ Usage
       output file 1  | dat  | postProcessing/\<FO\>/\<time\>/height
       output file 2  | dat  | postProcessing/\<FO\>/\<time\>/position
     \endtable
+    The headers also state the mode (# Mode : ...).
 
 Note
     - The point interpolation of alpha covers the whole mesh once per write.
@@ -106,6 +118,7 @@ SourceFiles
 #include "boundBox.H"
 #include "scalarField.H"
 #include "Pair.H"
+#include "Enum.H"
 
 // * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
 
@@ -128,6 +141,24 @@ class surfacePosition
     public fvMeshFunctionObject,
     public logFiles
 {
+public:
+
+    // Public Data Types
+
+        //- Which height along a line is reported
+        enum class modeType
+        {
+            ACCUMULATED,    //!< Length of the line in the liquid
+            HIGHEST,        //!< Highest point of the liquid
+            LOWEST          //!< Top of the lowest liquid part
+        };
+
+        //- Names of the modes
+        static const Enum<modeType> modeTypeNames_;
+
+
+private:
+
     // Private Enumerations
 
         //- Output files, as for interfaceHeight
@@ -145,6 +176,9 @@ class surfacePosition
 
         //- Is the alpha field that of the liquid?
         bool liquid_;
+
+        //- Which height is reported
+        modeType mode_;
 
         //- Direction of the lines, downwards (zero: gravity)
         vector direction_;
@@ -259,7 +293,7 @@ class surfacePosition
         //- Find the cells crossed by the lines
         void calcLineCells();
 
-        //- The parts of line li in the liquid in its cells on this
+        //- The parts of line li in the alpha phase in its cells on this
         //- processor, touching parts merged
         void liquidParts
         (
@@ -268,13 +302,14 @@ class surfacePosition
             List<Pair<scalar>>& parts
         );
 
-        //- Length of line li in the liquid from the liquid parts of all
-        //- processors, and the length of the line in the mesh (master only)
-        void lengths
+        //- Height of the mode above the lower boundary along line li, from
+        //- the parts of the line in the alpha phase on all processors, and
+        //- the length of the line in the mesh (master only)
+        void lineHeight
         (
             const label li,
             const UList<List<List<Pair<scalar>>>>& allParts,
-            scalar& liquidLength,
+            scalar& height,
             scalar& meshLength
         ) const;
 

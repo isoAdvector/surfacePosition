@@ -1,6 +1,6 @@
 #!/bin/sh
 cd "${0%/*}" || exit 1
 
-rm -rf flat537* flat500* flat300* slab slab_parallel log.check results.json
+rm -rf flat537* flat500* flat300* slab slab_parallel layers layers_parallel log.check results.json
 
 #------------------------------------------------------------------------------
