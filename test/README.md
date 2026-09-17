@@ -20,6 +20,11 @@ All flow cases use OpenFOAM's `interIsoFoam`.
 | `movingMesh` | 2D standing wave on a 20x20 mesh with adaptive refinement (`amr`, 400 time steps, some 180 mesh changes) and with a solid body oscillation of the mesh (`motion`, 50 steps), serial and 4 processors at the same time; the lines lie in the plane y = 0, on the internal faces that refinement creates; the line cells after every mesh change are compared with all cells (`checkLineCells`) | `log.compare` |
 | `largeTiming` | 3D standing wave in a cube with 100^3 cells on 18 processors (the last 18 cores; the other tests run on the remaining cores at the same time), 50 lines; one run with `surfacePosition` and `interfaceHeight`, timed per function object with OpenFOAM's profiling over 10 steps after 5 start-up steps | `log.timing` |
 
+`compatibility/Allrun` (not run by `./Allrun`) builds `surfacePosition` with
+every OpenFOAM.com installation with `geometricVoF` in `~/OpenFOAM` (or
+`FOAM_INSTALLS`) and runs `specialCases` and `movingMesh` with each; it writes
+`compatibility/log.compatibility` and takes about five minutes.
+
 `waveAccuracy` needs `streamFunFoam` and `libstreamFunctionWaveFvPatchField`
 from the `streamFunctionWave` repository, found next to this repository or
 next to a directory above it (or `STREAMFUNCTIONWAVE_SRC` pointing to its

@@ -1,0 +1,129 @@
+#!/bin/bash
+# Copyright (C) 2026 Johan Roenby
+# SPDX-License-Identifier: GPL-3.0-or-later
+cd "${0%/*}" || exit 1
+#------------------------------------------------------------------------------
+# Compatibility of surfacePosition with the OpenFOAM installations found in
+# FOAM_INSTALLS (default ~/OpenFOAM) that have src/transportModels/geometricVoF
+# (OpenFOAM.com v2006 and later). For each version:
+#   - is it built, and do its applications run (with its MPI, or only in
+#     serial with the dummy MPI library)?
+#   - does surfacePosition compile with it (library in work/<version>/lib)?
+#     If coordSet.H is not found (before v2206), it is built again with
+#     fileFormats on the include path to list the remaining errors.
+#   - do the specialCases and movingMesh tests pass with that library (only
+#     with a working MPI, as the tests also run in parallel)?
+# The versions are tested at the same time, in two groups on the two halves
+# of the cores. Writes log.compatibility and results.json (summarise.py).
+#
+# Environment variables:
+#   FOAM_INSTALLS   directory with the OpenFOAM-<version> installations
+#------------------------------------------------------------------------------
+
+installs=${FOAM_INSTALLS:-$HOME/OpenFOAM}
+src=$(cd ../.. && pwd)
+work=$(pwd)/work
+
+rm -rf "$work"
+mkdir -p "$work"
+
+# One installation per version: the first directory with the sources whose
+# bashrc gives the version and that is built, else the first one
+declare -A dirs
+for d in "$installs"/OpenFOAM-*
+do
+    [ -f "$d/etc/bashrc" ] && [ -d "$d/src/transportModels/geometricVoF" ] || continue
+    v=$(sed -n 's/^export WM_PROJECT_VERSION=\(v[0-9]*\).*/\1/p' "$d/etc/bashrc" | head -1)
+    [ -n "$v" ] || continue
+    built=$(ls "$d"/platforms/*/lib/libgeometricVoF.so 2>/dev/null | head -1)
+    if [ -z "${dirs[$v]}" ] || { [ -n "$built" ] && [ -z "$(ls "${dirs[$v]}"/platforms/*/lib/libgeometricVoF.so 2>/dev/null)" ]; }
+    then
+        dirs[$v]=$d
+    fi
+done
+versions=$(printf '%s\n' "${!dirs[@]}" | sort)
+
+# Check, build and test one version
+check()
+{
+    local v=$1 d=$2 cores=$3
+    local w=$work/$v
+    mkdir -p "$w/src" "$w/lib"
+    echo "$d" > "$w/install"
+
+    if [ -z "$(ls "$d"/platforms/*/lib/libgeometricVoF.so 2>/dev/null)" ]
+    then
+        echo "not built" > "$w/state"
+        return
+    fi
+
+    local mplib=""
+    if ! bash -c "source $d/etc/bashrc >/dev/null 2>&1; interIsoFoam -help >/dev/null 2>&1"
+    then
+        if bash -c "source $d/etc/bashrc WM_MPLIB=dummy >/dev/null 2>&1; interIsoFoam -help >/dev/null 2>&1"
+        then
+            mplib="WM_MPLIB=dummy"
+            echo "serial only" > "$w/state"
+        else
+            echo "does not run" > "$w/state"
+            return
+        fi
+    else
+        echo "runs" > "$w/state"
+    fi
+
+    cp "$src"/surfacePosition.[CH] "$w/src/"
+    cp -r "$src/Make" "$w/src/"
+    rm -rf "$w"/src/Make/linux64* "$w"/src/Make/darwin*
+
+    bash -c "source $d/etc/bashrc $mplib >/dev/null 2>&1
+        export FOAM_USER_LIBBIN=$w/lib
+        cd $w/src && wmake libso" > "$w/log.wmake" 2>&1
+    echo $? > "$w/compiled"
+
+    # Versions before v2206 have coordSet.H in fileFormats: build again with
+    # it on the include path, to list the remaining obstacles
+    if grep -q "coordSet.H: No such file" "$w/log.wmake"
+    then
+        cp -r "$w/src" "$w/src2"
+        rm -rf "$w"/src2/Make/linux64*
+        sed -i 's|-I$(LIB_SRC)/sampling/lnInclude \\|&\n    -I$(LIB_SRC)/fileFormats/lnInclude \\|' \
+            "$w/src2/Make/options"
+        bash -c "source $d/etc/bashrc $mplib >/dev/null 2>&1
+            export FOAM_USER_LIBBIN=$w/lib2
+            cd $w/src2 && wmake libso" > "$w/log.wmake2" 2>&1
+    fi
+
+    [ "$(cat "$w/compiled")" = 0 ] && [ -z "$mplib" ] || return
+
+    cp -r "$src/test/specialCases" "$src/test/movingMesh" "$w/"
+    for t in specialCases movingMesh
+    do
+        "$w/$t/Allclean" > /dev/null 2>&1
+        bash -c "source $d/etc/bashrc >/dev/null 2>&1
+            export FOAM_USER_LIBBIN=$w/lib
+            export LD_LIBRARY_PATH=$w/lib:\$LD_LIBRARY_PATH
+            export OMPI_MCA_hwloc_base_binding_policy=none
+            taskset -c $cores $w/$t/Allrun" > "$w/$t/log.Allrun" 2>&1
+        echo $? > "$w/$t/status"
+    done
+}
+
+nCores=$(lscpu -p=CORE | grep -v '^#' | sort -un | wc -l)
+half=$((nCores/2))
+group=0
+declare -a groups=("" "")
+for v in $versions
+do
+    groups[$group]="${groups[$group]} $v"
+    group=$((1 - group))
+done
+
+echo "Versions: $(echo $versions)"
+( for v in ${groups[0]}; do check "$v" "${dirs[$v]}" "0-$((half - 1))"; done ) &
+( for v in ${groups[1]}; do check "$v" "${dirs[$v]}" "$half-$((nCores - 1))"; done ) &
+wait
+
+python3 summarise.py "$work" | tee log.compatibility
+
+#------------------------------------------------------------------------------
