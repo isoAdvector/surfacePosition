@@ -36,7 +36,7 @@
 \newcommand{\iH}{\texttt{interfaceHeight}}
 
 \title{The \sP{} function object:\\ implementation and tests}
-\author{}
+\author{Johan Roenby}
 \date{\today}
 
 \begin{document}
@@ -194,6 +194,7 @@ or point) is reported once, identically in serial and parallel.
 
 % --------------------------------------------------------------------------- %
 \section{Test suite}
+\label{sec:tests}
 
 The suite (\texttt{test/Allrun}) runs four tests, each with a
 summary log and a \texttt{results.json} read by this report:
@@ -214,6 +215,20 @@ per core with local memory through an Open~MPI rank file, while the other
 tests run on the remaining cores. The suite passes if the checks of
 \texttt{specialCases} and \texttt{movingMesh} pass; in the run reported here
 they \specialPassed{} and \movingPassed{}, respectively.
+
+\paragraph{About \iH{}.}
+\iH{} was added to OpenFOAM by the OpenFOAM Foundation in May 2017
+(OpenFOAM-6) and has been in OpenFOAM.com since v2006, which added the
+optional \texttt{direction} entry. Its algorithm is the same in all
+OpenFOAM.com releases from v2006 to v2606: for each location it builds a
+\texttt{midPointAndFaceSet} along the mesh diagonal, with a new
+\texttt{meshSearch} at every write, integrates the interpolated volume fraction
+along it and sums the result over the processors. The only changes are the
+writing of the file headers (removed in v2012, restored on the master
+processor in v2406) and the documentation (v2512). The OpenFOAM Foundation
+corrected its parallel operation in May 2023 (commit \texttt{1d78434bee},
+OpenFOAM-11) by skipping sampling segments between two faces; OpenFOAM.com
+does not have this correction. The tests use the v2512 version.
 
 \subsection{Accuracy: exact stream function wave}
 
@@ -441,7 +456,7 @@ start-up steps and at the end, and the difference gives the time of
 
 \begin{figure}[!htbp]
   \centering
-  \includegraphics[width=0.5\textwidth]{figures/timing.png}
+  \includegraphics[width=0.4\textwidth]{figures/timing.png}
   \caption{\texttt{largeTiming}: water region coloured by the
     \timingProcs{} processor subdomains, and the \timingLines{} lines.}
   \label{fig:timing}
@@ -493,8 +508,10 @@ The checks of the suite were tightened accordingly: \texttt{nan} outputs are
 counted and fail the moving mesh test, and the check scripts' exit codes are
 passed on to \texttt{Allrun}.
 
-The tests also show that \iH{} is wrong on processor faces and for locations
-outside the vertical extent of the mesh (table~\ref{tab:specialIH}).
+The tests also show that \iH{} (v2512) is wrong on processor faces and for
+locations outside the vertical extent of the mesh (table~\ref{tab:specialIH}).
+The first may be what the OpenFOAM Foundation's parallel correction addresses
+(section~\ref{sec:tests}); this was not tested.
 
 % --------------------------------------------------------------------------- %
 \section{Reproducing this report}

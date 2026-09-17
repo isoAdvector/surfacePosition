@@ -5,6 +5,8 @@
 
 # surfacePosition
 
+*Johan Roenby*
+
 `surfacePosition` is an OpenFOAM (v2512) function object that reports where a
 volume-of-fluid interface crosses user-specified lines. It is an alternative to
 OpenFOAM's `interfaceHeight`, which integrates the volume fraction along a
@@ -185,6 +187,19 @@ on the remaining cores. The suite passes if the checks of `specialCases` and
 `movingMesh` pass; in the run reported here they passed and
 passed, respectively. All flow cases use OpenFOAM's `interIsoFoam`
 (and `streamFunFoam` for the exact wave, see [test/README.md](test/README.md)).
+
+**About `interfaceHeight`.** `interfaceHeight` was added to OpenFOAM by the
+OpenFOAM Foundation in May 2017 (OpenFOAM-6) and has been in OpenFOAM.com since
+v2006, which added the optional `direction` entry. Its algorithm is the same in
+all OpenFOAM.com releases from v2006 to v2606: for each location it builds a
+`midPointAndFaceSet` along the mesh diagonal, with a new `meshSearch` at every
+write, integrates the interpolated volume fraction along it and sums the result
+over the processors. The only changes are the writing of the file headers
+(removed in v2012, restored on the master processor in v2406) and the
+documentation (v2512). The OpenFOAM Foundation corrected its parallel operation
+in May 2023 (commit `1d78434bee`, OpenFOAM-11) by skipping sampling segments
+between two faces; OpenFOAM.com does not have this correction. The tests use
+the v2512 version.
 
 ### 3.1 Accuracy: exact stream function wave
 
@@ -408,8 +423,10 @@ The checks of the suite were tightened accordingly: `nan` outputs are counted
 and fail the moving mesh test, and the check scripts' exit codes are passed on
 to `Allrun`.
 
-The tests also show that `interfaceHeight` is wrong on processor faces and for
-locations outside the vertical extent of the mesh (table 3).
+The tests also show that `interfaceHeight` (v2512) is wrong on processor faces
+and for locations outside the vertical extent of the mesh (table 3). The first
+may be what the OpenFOAM Foundation's parallel correction addresses
+([section 3](#3-test-suite)); this was not tested.
 
 ## 5. Reproducing the tests and this README
 
@@ -427,4 +444,4 @@ cd report
 the `postProcessing` data of the cases; `makeFigures.py` renders the figures
 from the case data with ParaView; `makeReadme.py` writes this README from
 `test/report/README.md.in`. The report and this README were generated from the
-run of 2026-09-17 07:08 (source and tests at revision `3de4dcb`).
+run of 2026-09-17 07:08 (source and tests at revision `1ad71fe`).
