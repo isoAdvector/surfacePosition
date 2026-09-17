@@ -1,113 +1,115 @@
 #!/usr/bin/env python3
 #
-# Compares the points reported by surfacePosition (and interfaceHeight) in the
-# special cases with the exact interface positions, serial and parallel.
+# Compares the heights and positions written by surfacePosition (and
+# interfaceHeight) in the special cases with the exact values, serial and
+# parallel. Both write, per location, the height hB of the liquid above the
+# lower boundary (z = 0 here), the height hL of the interface above the
+# location, and the position of the interface; a line missing the mesh gives
+# hB = 0 and hL = GREAT.
 #
 # Usage: check.py <scenario> ...   (cases <scenario> and <scenario>_parallel)
 
 import json
-import math
 import os
+import re
 import sys
 
 import numpy as np
 
-NAN = float("nan")
-TOL = 1e-8      # tolerance for the geometric methods [m]
-# The alpha method interpolates linearly between cell centres, so it is only
-# expected within half a cell (0.05 m) for an interface inside a cell
+TOL = 1e-8          # tolerance for the heights and positions [m]
+GREAT = 1e15        # OpenFOAM's GREAT (double precision)
+EPS = 1e-9
 
 
-def expected(scenario):
-    """Exact (x, z) per line, or None where no interface should be found."""
-    if scenario.startswith("flat"):
-        z = int(scenario[4:])/1000
-        vertical = [(None, z)]*12
-        vertical[10] = None
-        lines = [(0.33, z), (0.33, z), None, None, None, (0.25, z)]
-        return vertical, lines
-    # Slab of water for x < 0.5, cyclic in x
-    vertical = [None]*12
-    lines = [None, None, (0.0, None), (0.5, None), (1.0, None), None]
-    return vertical, lines
+def locations(case, fo):
+    """The locations from the header of the height file"""
+    text = open(os.path.join(case, "postProcessing", fo, "0", "height.dat")).read()
+    return [tuple(float(v) for v in m.split())
+            for m in re.findall(r"^# Location \d+\s*:\s*\(([^)]*)\)", text, re.M)]
 
 
-def last_row(case, fo, fname):
-    p = os.path.join(case, "postProcessing", fo, "0", fname)
-    if not os.path.isfile(p):
+def expected_hB(scenario, loc):
+    """Exact height of the liquid above the bottom, None for a line missing
+    the mesh (the unit cube)"""
+    x, y, _ = loc
+    if not (-EPS <= x <= 1 + EPS and -EPS <= y <= 1 + EPS):
         return None
-    d = np.atleast_2d(np.genfromtxt(p, comments="#"))
-    return d[-1]
+    if scenario.startswith("flat"):
+        return int(scenario[4:])/1000
+    # Slab of water for x < 0.5, cyclic in x: a line on the plane x = 0.5
+    # lies between a full and an empty cell and gets their average
+    if abs(x - 0.5) < EPS:
+        return 0.5
+    return 1.0 if x < 0.5 else 0.0
 
 
-def points(row, nLines, cols):
-    """(x, z) per line from a surfacePosition row with cols per line."""
+def last_rows(case, fo):
+    """Last row of the height and position files: (hB, hL) and (x, y, z) per
+    location"""
+    d = os.path.join(case, "postProcessing", fo, "0")
+    if not os.path.isfile(os.path.join(d, "height.dat")):
+        return None, None
+    h = np.atleast_2d(np.genfromtxt(os.path.join(d, "height.dat"), comments="#"))[-1]
+    lines = [l for l in open(os.path.join(d, "position.dat")) if not l.startswith("#")]
+    p = [tuple(float(v) for v in m.split()) for m in re.findall(r"\(([^)]*)\)", lines[-1])]
+    heights = [(h[1 + 2*i], h[2 + 2*i]) for i in range((len(h) - 1)//2)]
+    return heights, p
+
+
+def errors(scenario, locs, heights, points):
+    """Largest error of hB, hL and the position per line; None if the line
+    should miss the mesh and correctly does, NaN if wrong"""
     out = []
-    for i in range(nLines):
-        x, z = row[1 + i*cols + cols - 3], row[1 + i*cols + cols - 1]
-        out.append((x, z))
+    for loc, (hB, hL), p in zip(locs, heights, points):
+        e = expected_hB(scenario, loc)
+        if e is None:
+            out.append(None if (hB == 0 and hL >= 0.5*GREAT) else float("nan"))
+            continue
+        exact_p = (loc[0], loc[1], e)
+        out.append(max(abs(hB - e), abs(hL - (e - loc[2])),
+                       max(abs(a - b) for a, b in zip(p, exact_p))))
     return out
-
-
-def verdict(got, exp, tol):
-    gx, gz = got
-    if exp is None:
-        return ("ok", 0.0) if (math.isnan(gx) and math.isnan(gz)) else ("FOUND", NAN)
-    if math.isnan(gz):
-        return ("NAN", NAN)
-    err = max(abs(gx - exp[0]) if exp[0] is not None else 0.0,
-              abs(gz - exp[1]) if exp[1] is not None else 0.0)
-    return ("ok" if err <= tol else "WRONG", err)
 
 
 allOk = True
 results = {}
 for scenario in sys.argv[1:]:
-    vExp, lExp = expected(scenario)
     print(f"\n=== {scenario}")
     for run in (scenario, scenario + "_parallel"):
         if not os.path.isdir(run):
             continue
         print(f"--- {run}")
         summary = results[run] = {"checks": {}, "interfaceHeight": {}}
-        rows = []
-        for m in ("reconstructed", "plic", "alpha"):
-            rows.append((f"vertical {m}", last_row(run, f"vertical_{m}", "surfacePosition.dat"), 5, vExp,
-                         TOL if m != "alpha" else 0.05, True))
-        for m in ("reconstructed", "plic"):
-            rows.append((f"lines {m}", last_row(run, f"lines_{m}", "surfacePosition.dat"), 4, lExp, TOL, True))
-        for label, row, cols, exp, tol, strict in rows:
-            if row is None:
-                print(f"  {label:24s} no output")
-                allOk = False
-                continue
-            res = [verdict(p, e, tol) for p, e in zip(points(row, len(exp), cols), exp)]
-            bad = [i for i, (v, _) in enumerate(res) if v != "ok"]
-            maxErr = max((e for v, e in res if v == "ok"), default=0.0)
-            status = "ok" if not bad else "FAILED lines " + ", ".join(f"{i} ({res[i][0]})" for i in bad)
-            if bad and strict:
-                allOk = False
-            summary["checks"][label] = {
-                "maxError": maxErr, "nLines": len(exp), "failed": bad,
-                "noInterface": sum(e is None for e in exp),
-            }
-            print(f"  {label:24s} max error {maxErr:.2e}  {status}")
-        # interfaceHeight: hB is the height above the lower boundary z = 0
-        row = last_row(run, "vertical_interfaceHeight", "height.dat")
-        if row is not None:
-            errs = []
-            for i, e in enumerate(vExp):
-                hB = row[1 + 2*i]
-                summary["interfaceHeight"][i] = {
-                    "hB": float(hB), "exact": None if e is None else e[1]
-                }
-                if e is None:
-                    errs.append(f"{i}:{hB:.3g}")
-                else:
-                    err = abs(hB - e[1])
-                    if err > 1e-6:
-                        errs.append(f"{i}:{hB - e[1]:+.3g}")
-            print(f"  {'vertical interfaceHeight':24s} lines differing: {', '.join(errs) if errs else 'none'}")
+
+        locs = locations(run, "vertical")
+        heights, points = last_rows(run, "vertical")
+        if heights is None:
+            print("  surfacePosition          no output")
+            allOk = False
+            continue
+        errs = errors(scenario, locs, heights, points)
+        bad = [i for i, e in enumerate(errs) if e is not None and not e <= TOL]
+        maxErr = max((e for e in errs if e is not None and e <= TOL), default=0.0)
+        if bad:
+            allOk = False
+        summary["checks"]["surfacePosition"] = {
+            "maxError": maxErr, "nLines": len(errs), "failed": bad,
+            "missing": sum(e is None for e in errs),
+        }
+        status = "ok" if not bad else "FAILED lines " + ", ".join(map(str, bad))
+        print(f"  {'surfacePosition':24s} max error {maxErr:.2e}  {status}")
+
+        # interfaceHeight on the same locations, for comparison
+        ihHeights, ihPoints = last_rows(run, "vertical_interfaceHeight")
+        if ihHeights is not None:
+            ihErrs = errors(scenario, locs, ihHeights, ihPoints)
+            differing = []
+            for i, (loc, (hB, hL)) in enumerate(zip(locs, ihHeights)):
+                e = expected_hB(scenario, loc)
+                summary["interfaceHeight"][i] = {"hB": float(hB), "hL": float(hL), "exact": e}
+                if ihErrs[i] is not None and not ihErrs[i] <= 1e-6:
+                    differing.append(f"{i}:hB {hB:.3g}" + ("" if e is None else f" (exact {e:.3g})"))
+            print(f"  {'interfaceHeight':24s} lines differing: {', '.join(differing) if differing else 'none'}")
 
 with open("results.json", "w") as f:
     json.dump({"passed": allOk, "tol": TOL, "runs": results}, f, indent=1)

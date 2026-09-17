@@ -63,17 +63,10 @@ functions
         libs            (surfacePosition);
         locations       $lineLocations;
         alpha           alpha.water;
-        direction       (0 0 1);
-        method          reconstructed;
+        direction       (0 0 -1);
         checkLineCells  true;
         writeControl    timeStep;
         writeInterval   1;
-    }
-
-    surfacePositionPlic1
-    {
-        $surfacePosition1;
-        method          plic;
     }
 
     interfaceHeight1
@@ -82,7 +75,7 @@ functions
         libs            (fieldFunctionObjects);
         locations       $lineLocations;
         alpha           alpha.water;
-        direction       (0 0 1);
+        direction       (0 0 -1);
         writeControl    timeStep;
         writeInterval   1;
     }

@@ -10,14 +10,11 @@
 #include "faceOnlySet.H"
 #include "uniformDimensionedFields.H"
 #include "volFields.H"
-#include "surfaceFields.H"
-#include "pointFields.H"
 #include "volPointInterpolation.H"
-#include "processorFvPatchFields.H"
+#include "surfaceIteratorIso.H"
 #include "processorPolyPatch.H"
 #include "PstreamBuffers.H"
 #include "mapPolyMesh.H"
-#include "Pair.H"
 #include "FixedList.H"
 #include "addToRunTimeSelectionTable.H"
 
@@ -33,149 +30,73 @@ namespace functionObjects
 }
 
 
-const Foam::Enum
-<
-    Foam::functionObjects::surfacePosition::methodType
->
-Foam::functionObjects::surfacePosition::methodTypeNames_
-({
-    { methodType::AUTO, "auto" },
-    { methodType::RECONSTRUCTED, "reconstructed" },
-    { methodType::PLIC, "plic" },
-    { methodType::ALPHA, "alpha" },
-});
-
-
-// * * * * * * * * * * * * * * * Local Functions * * * * * * * * * * * * * * //
-
-namespace
-{
-
-using namespace Foam;
-
-//- Volume of a tetrahedron
-inline scalar tetVolume
-(
-    const point& a,
-    const point& b,
-    const point& c,
-    const point& d
-)
-{
-    return mag((b - a) & ((c - a) ^ (d - a)))/6;
-}
-
-
-//- Point where the plane crosses the edge p-q, from the signed distances
-inline point edgeCut
-(
-    const point& p,
-    const point& q,
-    const scalar fp,
-    const scalar fq
-)
-{
-    return p + fp/(fp - fq)*(q - p);
-}
-
-
-//- Volume of the part of a tetrahedron with negative signed distance
-scalar tetVolumeBelow
-(
-    const FixedList<point, 4>& p,
-    const FixedList<scalar, 4>& f
-)
-{
-    FixedList<label, 4> below;
-    FixedList<label, 4> above;
-    label nBelow = 0;
-    label nAbove = 0;
-
-    for (label i = 0; i < 4; ++i)
-    {
-        if (f[i] < 0)
-        {
-            below[nBelow++] = i;
-        }
-        else
-        {
-            above[nAbove++] = i;
-        }
-    }
-
-    if (nBelow == 0)
-    {
-        return 0;
-    }
-
-    const scalar vTet = tetVolume(p[0], p[1], p[2], p[3]);
-
-    if (nBelow == 4)
-    {
-        return vTet;
-    }
-
-    if (nBelow == 1 || nBelow == 3)
-    {
-        // Small tetrahedron at the single vertex on its own side
-        const label i = (nBelow == 1 ? below[0] : above[0]);
-        const label j0 = (nBelow == 1 ? above[0] : below[0]);
-        const label j1 = (nBelow == 1 ? above[1] : below[1]);
-        const label j2 = (nBelow == 1 ? above[2] : below[2]);
-
-        const scalar vSmall = tetVolume
-        (
-            p[i],
-            edgeCut(p[i], p[j0], f[i], f[j0]),
-            edgeCut(p[i], p[j1], f[i], f[j1]),
-            edgeCut(p[i], p[j2], f[i], f[j2])
-        );
-
-        return (nBelow == 1 ? vSmall : vTet - vSmall);
-    }
-
-    // Two vertices on each side: triangular prism between the edge a-b and
-    // the cut, split into three tetrahedra
-    const label a = below[0];
-    const label b = below[1];
-    const label c = above[0];
-    const label e = above[1];
-
-    const point pac(edgeCut(p[a], p[c], f[a], f[c]));
-    const point pae(edgeCut(p[a], p[e], f[a], f[e]));
-    const point pbc(edgeCut(p[b], p[c], f[b], f[c]));
-    const point pbe(edgeCut(p[b], p[e], f[b], f[e]));
-
-    return
-        tetVolume(p[a], pac, pae, p[b])
-      + tetVolume(pac, pae, p[b], pbc)
-      + tetVolume(pae, p[b], pbc, pbe);
-}
-
-} // End anonymous namespace
-
 
 // * * * * * * * * * * * * * Private Member Functions  * * * * * * * * * * * //
+
+void Foam::functionObjects::surfacePosition::setLines()
+{
+    if (mag(direction_) > VSMALL)
+    {
+        down_ = direction_/mag(direction_);
+    }
+    else
+    {
+        const auto* gPtr =
+            mesh_.time().cfindObject<uniformDimensionedVectorField>("g");
+
+        if (!gPtr || mag(gPtr->value()) < VSMALL)
+        {
+            FatalErrorInFunction
+                << "No direction given and no gravity (g) registered"
+                << exit(FatalError);
+        }
+
+        down_ = gPtr->value()/mag(gPtr->value());
+    }
+
+    // Lines from above to below through the locations, across the whole mesh
+    // wherever the location is, with a margin for mesh motion
+    const boundBox& bb = mesh_.bounds();
+    const tmp<pointField> tcorners(bb.points());
+    scalar hMin = GREAT;
+    scalar hMax = -GREAT;
+
+    for (const point& p : tcorners())
+    {
+        hMin = min(hMin, -down_ & p);
+        hMax = max(hMax, -down_ & p);
+    }
+
+    const scalar margin = bb.mag();
+
+    length_ = hMax - hMin + 2*margin;
+    starts_.resize(locations_.size());
+
+    forAll(locations_, li)
+    {
+        const scalar hLoc = -down_ & locations_[li];
+        starts_[li] = locations_[li] - (hMax + margin - hLoc)*down_;
+    }
+}
+
 
 bool Foam::functionObjects::surfacePosition::crossesLine
 (
     const label celli,
     const label li,
     scalar& sIn,
-    scalar& sOut,
-    label& entryFace
+    scalar& sOut
 ) const
 {
     const vectorField& Sf = mesh_.faceAreas();
     const vectorField& Cf = mesh_.faceCentres();
     const labelUList& own = mesh_.faceOwner();
     const point& start = starts_[li];
-    const vector& dir = dirs_[li];
+    const vector& dir = down_;
 
     // Clip the line parameter against the half-spaces of the cell faces
     scalar sMin = 0;
-    scalar sMax = lengths_[li];
-    entryFace = -1;
+    scalar sMax = length_;
 
     for (const label facei : mesh_.cells()[celli])
     {
@@ -186,7 +107,7 @@ bool Foam::functionObjects::surfacePosition::crossesLine
         const scalar magN = mag(n);
         const scalar tol = 1e-9*magN*Foam::sqrt(magN);
 
-        if (mag(den)*lengths_[li] <= tol)
+        if (mag(den)*length_ <= tol)
         {
             // Line parallel to the face (its distance from the face plane
             // changes by less than 1e-9 of the face size along the whole
@@ -206,10 +127,9 @@ bool Foam::functionObjects::surfacePosition::crossesLine
         {
             sMax = min(sMax, s);
         }
-        else if (s > sMin)
+        else
         {
-            sMin = s;
-            entryFace = facei;
+            sMin = max(sMin, s);
         }
 
         if (sMax <= sMin)
@@ -221,7 +141,7 @@ bool Foam::functionObjects::surfacePosition::crossesLine
     sIn = sMin;
     sOut = sMax;
 
-    return (sMax - sMin > SMALL*lengths_[li]);
+    return (sMax - sMin > SMALL*length_);
 }
 
 
@@ -249,7 +169,7 @@ void Foam::functionObjects::surfacePosition::searchSeeds
         *searchPtr_,
         "xyz",
         starts_[li],
-        starts_[li] + lengths_[li]*dirs_[li]
+        starts_[li] + length_*down_
     );
 
     // The cells of the set seed a flood fill, which also finds cells crossed
@@ -259,9 +179,9 @@ void Foam::functionObjects::surfacePosition::searchSeeds
     DynamicList<label> found(set.cells());
 
     const point& start = starts_[li];
-    const vector& dir = dirs_[li];
+    const vector& dir = down_;
     scalar s0 = 0;
-    scalar s1 = lengths_[li];
+    scalar s1 = length_;
 
     for (direction cmpt = 0; cmpt < vector::nComponents; ++cmpt)
     {
@@ -541,16 +461,12 @@ void Foam::functionObjects::surfacePosition::setLineCells
     const labelUList& cells
 )
 {
-    const vectorField& C = mesh_.cellCentres();
-
-    // Entry and exit distances and entry faces
     scalarList sIn(cells.size());
     scalarList sOut(cells.size());
-    labelList entry(cells.size());
 
     forAll(cells, i)
     {
-        crossesLine(cells[i], li, sIn[i], sOut[i], entry[i]);
+        crossesLine(cells[i], li, sIn[i], sOut[i]);
     }
 
     // Order the cells along the line
@@ -560,13 +476,91 @@ void Foam::functionObjects::surfacePosition::setLineCells
     lineCells_[li] = labelList(UIndirectList<label>(cells, order));
     lineIn_[li] = scalarList(UIndirectList<scalar>(sIn, order));
     lineOut_[li] = scalarList(UIndirectList<scalar>(sOut, order));
-    lineEntry_[li] = labelList(UIndirectList<label>(entry, order));
+}
 
-    scalarList& dist = lineDist_[li];
-    dist.resize(cells.size());
-    forAll(dist, i)
+
+void Foam::functionObjects::surfacePosition::calcCover()
+{
+    const label nLines = starts_.size();
+
+    // The segments of the line cells of all processors
+    List<List<Pair<scalar>>> local(nLines);
+
+    forAll(local, li)
     {
-        dist[i] = (C[lineCells_[li][i]] - starts_[li]) & dirs_[li];
+        List<Pair<scalar>>& segments = local[li];
+        segments.resize(lineIn_[li].size());
+
+        forAll(segments, k)
+        {
+            segments[k] = Pair<scalar>(lineIn_[li][k], lineOut_[li][k]);
+        }
+    }
+
+    const List<List<List<Pair<scalar>>>> all
+    (
+        Pstream::listGatherValues(local)
+    );
+
+    if (!Pstream::master())
+    {
+        return;
+    }
+
+    breaks_.resize(nLines);
+    cover_.resize(nLines);
+
+    for (label li = 0; li < nLines; ++li)
+    {
+        // The ends of all segments, sorted and unique, divide the line into
+        // parts, each covered by a fixed number of cells
+        DynamicList<scalar> ends;
+
+        for (const auto& proc : all)
+        {
+            for (const Pair<scalar>& seg : proc[li])
+            {
+                ends.push_back(seg.first());
+                ends.push_back(seg.second());
+            }
+        }
+
+        Foam::sort(ends);
+
+        scalarList& breaks = breaks_[li];
+        breaks.resize(ends.size());
+        label n = 0;
+
+        for (const scalar s : ends)
+        {
+            if (n == 0 || s > breaks[n - 1])
+            {
+                breaks[n++] = s;
+            }
+        }
+        breaks.resize(n);
+
+        labelList& cover = cover_[li];
+        cover.resize(max(n - 1, 0));
+        cover = 0;
+
+        for (const auto& proc : all)
+        {
+            for (const Pair<scalar>& seg : proc[li])
+            {
+                const label first = findLower(breaks, seg.first()) + 1;
+
+                for
+                (
+                    label j = first;
+                    j < cover.size() && breaks[j] < seg.second();
+                    ++j
+                )
+                {
+                    ++cover[j];
+                }
+            }
+        }
     }
 }
 
@@ -595,10 +589,8 @@ void Foam::functionObjects::surfacePosition::calcLineCells()
     }
 
     lineCells_.resize(nLines);
-    lineDist_.resize(nLines);
     lineIn_.resize(nLines);
     lineOut_.resize(nLines);
-    lineEntry_.resize(nLines);
 
     label nCells = 0;
     label nMissing = 0;
@@ -659,6 +651,8 @@ void Foam::functionObjects::surfacePosition::calcLineCells()
     seeds_.clear();
     update_ = false;
 
+    calcCover();
+
     if (seeded && checkLineCells_)
     {
         reduce(nCells, sumOp<label>());
@@ -682,381 +676,315 @@ void Foam::functionObjects::surfacePosition::calcLineCells()
 }
 
 
-bool Foam::functionObjects::surfacePosition::predecessor
-(
-    const label li,
-    const label k,
-    const volScalarField& alpha,
-    scalar& value,
-    scalar* distPtr
-) const
-{
-    const label facei = lineEntry_[li][k];
-
-    if (facei < 0)
-    {
-        return false;   // The line starts in the cell
-    }
-
-    const label celli = lineCells_[li][k];
-
-    if (mesh_.isInternalFace(facei))
-    {
-        const label own = mesh_.faceOwner()[facei];
-        const label nbr = (own == celli ? mesh_.faceNeighbour()[facei] : own);
-        value = alpha[nbr];
-
-        if (distPtr)
-        {
-            *distPtr = (mesh_.C()[nbr] - starts_[li]) & dirs_[li];
-        }
-        return true;
-    }
-
-    const polyBoundaryMesh& pbm = mesh_.boundaryMesh();
-    const label patchi = pbm.whichPatch(facei);
-    const fvPatchScalarField& pf = alpha.boundaryField()[patchi];
-
-    if (!pf.coupled() || pf.empty())
-    {
-        return false;   // The line enters the domain here
-    }
-
-    // Processor patch values are the neighbour cell values
-    const label i = facei - pbm[patchi].start();
-    value =
-    (
-        isA<processorFvPatchScalarField>(pf)
-      ? pf[i]
-      : pf.patchNeighbourField()()[i]
-    );
-
-    if (distPtr)
-    {
-        // Neighbour cell centre from the cell centre and the patch delta
-        const point nbrCentre
-        (
-            mesh_.C()[celli] + mesh_.boundary()[patchi].delta()()[i]
-        );
-        *distPtr = (nbrCentre - starts_[li]) & dirs_[li];
-    }
-
-    return true;
-}
-
-
-void Foam::functionObjects::surfacePosition::firstInterface
+void Foam::functionObjects::surfacePosition::liquidParts
 (
     const label li,
     const volScalarField& alpha,
-    const volVectorField* normalPtr,
-    const volVectorField* centrePtr,
-    const pointScalarField* pointAlphaPtr,
-    scalar& event,
-    scalar& fallback
-) const
+    List<Pair<scalar>>& parts
+)
 {
     const point& start = starts_[li];
-    const vector& dir = dirs_[li];
     const labelList& cells = lineCells_[li];
     const scalarList& sIn = lineIn_[li];
+    const scalarList& sOut = lineOut_[li];
 
-    event = GREAT;
-    fallback = GREAT;
+    DynamicList<Pair<scalar>> found;
+
+    // Add the part [s0, s1] of the line, merged with the last part if they
+    // touch (which leaves the covered length unchanged)
+    auto add = [&found](const scalar s0, const scalar s1)
+    {
+        if (s1 <= s0)
+        {
+            return;
+        }
+        if (found.size() && found.back().second() == s0)
+        {
+            found.back().second() = s1;
+        }
+        else
+        {
+            found.push_back(Pair<scalar>(s0, s1));
+        }
+    };
 
     forAll(cells, k)
     {
-        if (sIn[k] > event)
-        {
-            break;  // The cells further on cannot hold an earlier event
-        }
-
         const label celli = cells[k];
         const scalar a = alpha[celli];
 
-        // Sharp jump of alpha at the entry face, between two full cells
-        if (a <= jumpTol_ || a >= 1 - jumpTol_)
+        if (a >= 1 - surfCellTol_)
         {
-            scalar aPrev = 0;
-
-            if
-            (
-                predecessor(li, k, alpha, aPrev)
-             && (aPrev <= jumpTol_ || aPrev >= 1 - jumpTol_)
-             && (aPrev - 0.5)*(a - 0.5) < 0
-            )
-            {
-                event = min(event, sIn[k]);
-                continue;
-            }
+            add(sIn[k], sOut[k]);
+            continue;
         }
-
-        // Interface plane in the cell
-        vector n(Zero);
-        scalar d = 0;
-
-        if (normalPtr)
-        {
-            n = (*normalPtr)[celli];
-            const scalar magN = mag(n);
-
-            if (magN < VSMALL)
-            {
-                continue;   // Not an interface cell
-            }
-
-            n /= magN;
-            d = n & (*centrePtr)[celli];
-        }
-        else
-        {
-            if (a <= alphaTol_ || a >= 1 - alphaTol_)
-            {
-                continue;   // Not an interface cell
-            }
-
-            // Normal pointing out of the phase alpha
-            n = -alphaGradient(celli, *pointAlphaPtr);
-            const scalar magN = mag(n);
-
-            if (magN < VSMALL)
-            {
-                continue;
-            }
-
-            n /= magN;
-
-            // Plane (n & x) = d with the phase alpha on the side (n & x) < d
-            d = plicPlane(celli, a, n);
-        }
-
-        const scalar dirN = dir & n;
-
-        if (mag(dirN) <= SMALL)
-        {
-            continue;   // Line parallel to the interface plane
-        }
-
-        const scalar s = (d - (n & start))/dirN;
-
-        if (insideCell(li, k, s))
-        {
-            event = min(event, s);
-        }
-        else if (fallback == GREAT)
-        {
-            fallback = s;
-        }
-    }
-}
-
-
-Foam::vector Foam::functionObjects::surfacePosition::alphaGradient
-(
-    const label celli,
-    const pointScalarField& pointAlpha
-) const
-{
-    const vectorField& Sf = mesh_.faceAreas();
-    const labelUList& own = mesh_.faceOwner();
-    const faceList& faces = mesh_.faces();
-
-    // Gauss gradient with face values from the point values (Youngs)
-    vector grad(Zero);
-
-    for (const label facei : mesh_.cells()[celli])
-    {
-        const face& f = faces[facei];
-
-        scalar af = 0;
-        for (const label pointi : f)
-        {
-            af += pointAlpha[pointi];
-        }
-        af /= f.size();
-
-        grad += (own[facei] == celli ? af : -af)*Sf[facei];
-    }
-
-    return grad;
-}
-
-
-Foam::scalar Foam::functionObjects::surfacePosition::volumeBelow
-(
-    const label celli,
-    const vector& n,
-    const scalar d
-) const
-{
-    const pointField& points = mesh_.points();
-    const faceList& faces = mesh_.faces();
-    const vectorField& Cf = mesh_.faceCentres();
-    const point& cc = mesh_.cellCentres()[celli];
-    const scalar fc = (n & cc) - d;
-
-    scalar volume = 0;
-
-    // Tetrahedra from the cell centre, a face centre and a face edge
-    for (const label facei : mesh_.cells()[celli])
-    {
-        const face& f = faces[facei];
-        const scalar ff = (n & Cf[facei]) - d;
-
-        forAll(f, fp)
-        {
-            const point& p1 = points[f[fp]];
-            const point& p2 = points[f.nextLabel(fp)];
-
-            volume += tetVolumeBelow
-            (
-                FixedList<point, 4>({cc, Cf[facei], p1, p2}),
-                FixedList<scalar, 4>
-                ({
-                    fc,
-                    ff,
-                    (n & p1) - d,
-                    (n & p2) - d
-                })
-            );
-        }
-    }
-
-    return volume;
-}
-
-
-Foam::scalar Foam::functionObjects::surfacePosition::plicPlane
-(
-    const label celli,
-    const scalar alpha1,
-    const vector& n
-) const
-{
-    const pointField& points = mesh_.points();
-    const faceList& faces = mesh_.faces();
-
-    scalar dMin = GREAT;
-    scalar dMax = -GREAT;
-
-    for (const label facei : mesh_.cells()[celli])
-    {
-        for (const label pointi : faces[facei])
-        {
-            const scalar d = n & points[pointi];
-            dMin = min(dMin, d);
-            dMax = max(dMax, d);
-        }
-    }
-
-    const scalar volume = volumeBelow(celli, n, dMax + (dMax - dMin));
-    const scalar target = alpha1*volume;
-    const scalar tol = 1e-12*(dMax - dMin);
-
-    // Bisection on the monotonic volume below the plane
-    for (label iter = 0; iter < 100 && dMax - dMin > tol; ++iter)
-    {
-        const scalar d = 0.5*(dMin + dMax);
-
-        if (volumeBelow(celli, n, d) < target)
-        {
-            dMin = d;
-        }
-        else
-        {
-            dMax = d;
-        }
-    }
-
-    return 0.5*(dMin + dMax);
-}
-
-
-Foam::scalar Foam::functionObjects::surfacePosition::alphaDistance
-(
-    const label li,
-    const volScalarField& alpha
-) const
-{
-    const labelList& cells = lineCells_[li];
-    const scalarList& dist = lineDist_[li];
-    const scalarList& sIn = lineIn_[li];
-
-    scalar best = GREAT;
-
-    // Crossings of alpha = 0.5 between each cell and the cell before it
-    // along the line, each found only by the later cell
-    forAll(cells, k)
-    {
-        if (sIn[k] > best)
-        {
-            break;
-        }
-
-        scalar aPrev = 0;
-        scalar sPrev = 0;
-
-        if (!predecessor(li, k, alpha, aPrev, &sPrev))
+        if (a <= surfCellTol_)
         {
             continue;
         }
 
-        const scalar a0 = aPrev - 0.5;
-        const scalar a1 = alpha[cells[k]] - 0.5;
+        // Interface cell: the part on the liquid side of the isosurface. The
+        // status returned for cells within isoFaceTol of full or empty is not
+        // that of the cut, so those are decided by their volume fraction.
+        const label status =
+            isoPtr_->vofCutCell(celli, a, isoFaceTol_, maxIter_);
 
-        if (a0*a1 < 0 || (a1 == 0 && a0 != 0))
+        const vector& n = isoPtr_->surfaceArea();
+        const scalar magN = mag(n);
+
+        if (status != 0 || magN < VSMALL)
         {
-            best = min(best, sPrev + a0/(a0 - a1)*(dist[k] - sPrev));
+            if (a >= 0.5)
+            {
+                add(sIn[k], sOut[k]);
+            }
+            continue;
+        }
+
+        // Normal of the isosurface into the liquid, i.e. towards the centre of
+        // the submerged part of the cell (the orientation of the isosurface
+        // area is not relied on). The liquid is where (x - centre) & m > 0,
+        // with x = start + s*down.
+        const point& centre = isoPtr_->surfaceCentre();
+        const vector m
+        (
+            ((isoPtr_->subCellCentre() - centre) & n) > 0 ? n : -n
+        );
+        const scalar dm = down_ & m;
+        const scalar f0 = (start - centre) & m;
+
+        if (mag(dm) <= SMALL*magN)
+        {
+            // Line parallel to the isosurface
+            if (f0 + 0.5*(sIn[k] + sOut[k])*dm > 0)
+            {
+                add(sIn[k], sOut[k]);
+            }
+        }
+        else
+        {
+            const scalar sCut = -f0/dm;
+
+            if (dm > 0)
+            {
+                add(max(sIn[k], sCut), sOut[k]);    // Liquid below the cut
+            }
+            else
+            {
+                add(sIn[k], min(sOut[k], sCut));    // Liquid above the cut
+            }
         }
     }
 
-    return best;
+    parts.transfer(found);
 }
 
 
-void Foam::functionObjects::surfacePosition::writeFileHeader(Ostream& os)
+void Foam::functionObjects::surfacePosition::lengths
+(
+    const label li,
+    const UList<List<List<Pair<scalar>>>>& allParts,
+    scalar& liquidLength,
+    scalar& meshLength
+) const
 {
-    writeHeader(os, "Interface position along lines");
+    const scalarList& breaks = breaks_[li];
+    const labelList& cover = cover_[li];
 
-    writeHeaderValue(os, "Method", methodTypeNames_[usedMethod_]);
-
-    if (useLocations_)
+    meshLength = 0;
+    forAll(cover, j)
     {
-        writeHeaderValue(os, "Upward direction", up_);
-    }
-
-    forAll(starts_, li)
-    {
-        const string line("Line " + Foam::name(li));
-        writeHeaderValue(os, line + " start", starts_[li]);
-        writeHeaderValue(os, line + " direction", dirs_[li]);
-        writeHeaderValue(os, line + " length", lengths_[li]);
-
-        if (useLocations_)
+        if (cover[j])
         {
-            writeHeaderValue(os, line + " location", locations_[li]);
+            meshLength += breaks[j + 1] - breaks[j];
         }
     }
 
-    writeCommented(os, "Time");
+    // Each liquid part adds its overlap with each part of the line divided
+    // by the number of cells covering that part
+    liquidLength = 0;
 
-    forAll(starts_, li)
+    for (const auto& proc : allParts)
     {
-        const word n(Foam::name(li));
-
-        writeTabbed(os, "s" + n);
-
-        if (useLocations_)
+        for (const Pair<scalar>& part : proc[li])
         {
-            writeTabbed(os, "h" + n);
-        }
+            label j = max(findLower(breaks, part.first()), 0);
 
-        writeTabbed(os, "x" + n);
-        writeTabbed(os, "y" + n);
-        writeTabbed(os, "z" + n);
+            for (; j < cover.size() && breaks[j] < part.second(); ++j)
+            {
+                if (cover[j])
+                {
+                    const scalar overlap =
+                        min(part.second(), breaks[j + 1])
+                      - max(part.first(), breaks[j]);
+
+                    if (overlap > 0)
+                    {
+                        liquidLength += overlap/cover[j];
+                    }
+                }
+            }
+        }
     }
 
-    os  << endl;
+    liquidLength = min(liquidLength, meshLength);
+}
+
+
+void Foam::functionObjects::surfacePosition::writeFileHeader
+(
+    const fileID fid
+)
+{
+    // As interfaceHeight
+    forAll(locations_, li)
+    {
+        writeHeaderValue
+        (
+            files(label(fid)),
+            "Location " + Foam::name(li),
+            locations_[li]
+        );
+    }
+
+    switch (fid)
+    {
+        case fileID::heightFile:
+        {
+            writeHeaderValue
+            (
+                files(label(fid)),
+                "hB",
+                "Interface height above the boundary"
+            );
+            writeHeaderValue
+            (
+                files(label(fid)),
+                "hL",
+                "Interface height above the location"
+            );
+            break;
+        }
+        case fileID::positionFile:
+        {
+            writeHeaderValue(files(label(fid)), "p", "Interface position");
+            break;
+        }
+    }
+
+    const Foam::Omanip<int> w = valueWidth(1);
+
+    writeCommented(files(label(fid)), "Location");
+    forAll(locations_, li)
+    {
+        switch (fid)
+        {
+            case fileID::heightFile:
+                files(label(fid)) << w << li << w << ' ';
+                break;
+            case fileID::positionFile:
+                files(label(fid)) << w << li << w << ' ' << w << ' ' << "  ";
+                break;
+        }
+    }
+    files(label(fid)).endl();
+
+    writeCommented(files(label(fid)), "Time");
+    forAll(locations_, li)
+    {
+        switch (fid)
+        {
+            case fileID::heightFile:
+                files(label(fid)) << w << "hB" << w << "hL";
+                break;
+            case fileID::positionFile:
+                files(label(fid)) << w << "p" << w << ' ' << w << ' ' << "  ";
+                break;
+        }
+    }
+    files(label(fid)).endl();
+}
+
+
+void Foam::functionObjects::surfacePosition::writePositions()
+{
+    if (update_)
+    {
+        calcLineCells();
+    }
+
+    const volScalarField& alpha =
+        mesh_.lookupObject<volScalarField>(alphaName_);
+
+    // Point values of alpha for the isosurface cuts. The interpolation covers
+    // the whole mesh and is collective, so it is done on all processors.
+    const tmp<pointScalarField> tpointAlpha
+    (
+        volPointInterpolation::New(mesh_).interpolate(alpha)
+    );
+    ap_ = tpointAlpha().primitiveField();
+
+    if (!isoPtr_)
+    {
+        isoPtr_.reset(new surfaceIteratorIso(mesh_, ap_, surfCellTol_));
+    }
+
+    const label nLines = starts_.size();
+    List<List<Pair<scalar>>> local(nLines);
+
+    for (label li = 0; li < nLines; ++li)
+    {
+        liquidParts(li, alpha, local[li]);
+    }
+
+    const List<List<List<Pair<scalar>>>> allParts
+    (
+        Pstream::listGatherValues(local)
+    );
+
+    if (!Pstream::master())
+    {
+        return;
+    }
+
+    files(label(fileID::heightFile)) << mesh_.time().timeName() << tab;
+    files(label(fileID::positionFile)) << mesh_.time().timeName() << tab;
+
+    const vector up(-down_);
+
+    for (label li = 0; li < nLines; ++li)
+    {
+        scalar liquidLength = 0;
+        scalar meshLength = 0;
+        lengths(li, allParts, liquidLength, meshLength);
+
+        // Height of the location above the lower boundary, where the line
+        // leaves the mesh (as interfaceHeight: -GREAT if it misses the mesh)
+        scalar hLB = -GREAT;
+
+        if (meshLength > 0)
+        {
+            const point pLow(starts_[li] + breaks_[li].last()*down_);
+            hLB = up & (locations_[li] - pLow);
+        }
+
+        // Interface heights above the boundary and location
+        const scalar hIB = liquid_ ? liquidLength : meshLength - liquidLength;
+        const scalar hIL = hIB - hLB;
+
+        // Position of the interface
+        const point p = locations_[li] + up*hIL;
+
+        const Foam::Omanip<int> w = valueWidth(1);
+
+        files(label(fileID::heightFile)) << w << hIB << w << hIL;
+        files(label(fileID::positionFile))
+            << '(' << w << p.x() << w << p.y()
+            << valueWidth() << p.z() << ") ";
+    }
+
+    files(label(fileID::heightFile)).endl();
+    files(label(fileID::positionFile)).endl();
 }
 
 
@@ -1070,132 +998,71 @@ Foam::functionObjects::surfacePosition::surfacePosition
 )
 :
     fvMeshFunctionObject(name, runTime, dict),
-    writeFile(mesh_, name, typeName, dict),
-    alphaName_("alpha.water"),
-    method_(methodType::AUTO),
-    usedMethod_(methodType::AUTO),
-    alphaTol_(1e-8),
+    logFiles(obr_, name),
+    alphaName_("alpha"),
+    liquid_(true),
+    direction_(Zero),
+    locations_(),
+    surfCellTol_(1e-8),
+    isoFaceTol_(1e-8),
     checkLineCells_(false),
     fullSearchInterval_(0),
     nRebuilds_(0),
-    useLocations_(true),
-    locations_(),
-    up_(Zero),
+    down_(Zero),
     starts_(),
-    dirs_(),
-    lengths_(),
+    length_(0),
     lineCells_(),
-    lineDist_(),
+    lineIn_(),
+    lineOut_(),
+    breaks_(),
+    cover_(),
     seeds_(),
     searchPtr_(nullptr),
     searchStale_(false),
     update_(true),
-    headerDone_(false)
+    ap_(),
+    isoPtr_(nullptr)
 {
     read(dict);
+    resetNames({"height", "position"});
+
+    if (Pstream::master())
+    {
+        writeFileHeader(fileID::heightFile);
+        writeFileHeader(fileID::positionFile);
+    }
 }
+
+
+// * * * * * * * * * * * * * * * * Destructor  * * * * * * * * * * * * * * * //
+
+Foam::functionObjects::surfacePosition::~surfacePosition()
+{}
 
 
 // * * * * * * * * * * * * * * * Member Functions  * * * * * * * * * * * * * //
 
 bool Foam::functionObjects::surfacePosition::read(const dictionary& dict)
 {
-    if (!(fvMeshFunctionObject::read(dict) && writeFile::read(dict)))
+    if (!fvMeshFunctionObject::read(dict))
     {
         return false;
     }
 
-    alphaName_ = dict.getOrDefault<word>("alpha", "alpha.water");
-    method_ = methodTypeNames_.getOrDefault("method", dict, methodType::AUTO);
-    alphaTol_ = dict.getOrDefault<scalar>("alphaTol", 1e-8);
+    alphaName_ = dict.getOrDefault<word>("alpha", "alpha");
+    liquid_ = dict.getOrDefault("liquid", true);
+    dict.readEntry("locations", locations_);
+    direction_ = dict.getOrDefault<vector>("direction", Zero);
+    surfCellTol_ = dict.getOrDefault<scalar>("surfCellTol", 1e-8);
+    isoFaceTol_ = dict.getOrDefault<scalar>("isoFaceTol", 1e-8);
     checkLineCells_ = dict.getOrDefault("checkLineCells", false);
     fullSearchInterval_ = dict.getOrDefault<label>("fullSearchInterval", 0);
 
-    if (dict.found("lines"))
-    {
-        useLocations_ = false;
-
-        const List<Pair<point>> lines(dict.get<List<Pair<point>>>("lines"));
-
-        starts_.resize(lines.size());
-        dirs_.resize(lines.size());
-        lengths_.resize(lines.size());
-
-        forAll(lines, li)
-        {
-            const vector d = lines[li].second() - lines[li].first();
-            lengths_[li] = mag(d);
-
-            if (lengths_[li] < VSMALL)
-            {
-                FatalIOErrorInFunction(dict)
-                    << "Line " << li << " has zero length"
-                    << exit(FatalIOError);
-            }
-
-            starts_[li] = lines[li].first();
-            dirs_[li] = d/lengths_[li];
-        }
-    }
-    else
-    {
-        useLocations_ = true;
-        locations_ = dict.get<List<point>>("locations");
-
-        vector direction(Zero);
-
-        if (!dict.readIfPresent("direction", direction))
-        {
-            const auto* gPtr =
-                mesh_.time().cfindObject<uniformDimensionedVectorField>("g");
-
-            if (!gPtr)
-            {
-                FatalIOErrorInFunction(dict)
-                    << "No direction given and no gravity (g) registered"
-                    << exit(FatalIOError);
-            }
-
-            direction = -gPtr->value();
-        }
-
-        if (mag(direction) < VSMALL)
-        {
-            FatalIOErrorInFunction(dict)
-                << "The direction is zero"
-                << exit(FatalIOError);
-        }
-
-        up_ = direction/mag(direction);
-
-        // Lines from above to below through the locations, across the whole
-        // mesh wherever the location is, with a margin for mesh motion
-        const boundBox& bb = mesh_.bounds();
-        const tmp<pointField> tcorners(bb.points());
-        scalar hMin = GREAT;
-        scalar hMax = -GREAT;
-
-        for (const point& p : tcorners())
-        {
-            hMin = min(hMin, up_ & p);
-            hMax = max(hMax, up_ & p);
-        }
-
-        const scalar margin = bb.mag();
-
-        starts_.resize(locations_.size());
-        dirs_ = List<vector>(locations_.size(), -up_);
-        lengths_ = List<scalar>(locations_.size(), hMax - hMin + 2*margin);
-
-        forAll(locations_, li)
-        {
-            const scalar hLoc = up_ & locations_[li];
-            starts_[li] = locations_[li] + (hMax + margin - hLoc)*up_;
-        }
-    }
+    setLines();
 
     seeds_.clear();
     update_ = true;
+    isoPtr_.reset(nullptr);
 
     return true;
 }
@@ -1209,133 +1076,9 @@ bool Foam::functionObjects::surfacePosition::execute()
 
 bool Foam::functionObjects::surfacePosition::write()
 {
-    if (update_)
-    {
-        calcLineCells();
-    }
+    logFiles::write();
 
-    const volScalarField& alpha =
-        mesh_.lookupObject<volScalarField>(alphaName_);
-
-    const word normalName
-    (
-        IOobject::groupName("interfaceNormal", alpha.group())
-    );
-    const word centreName
-    (
-        IOobject::groupName("interfaceCentre", alpha.group())
-    );
-
-    const volVectorField* normalPtr = nullptr;
-    const volVectorField* centrePtr = nullptr;
-
-    usedMethod_ = method_;
-
-    if (method_ == methodType::AUTO || method_ == methodType::RECONSTRUCTED)
-    {
-        normalPtr = mesh_.cfindObject<volVectorField>(normalName);
-        centrePtr = mesh_.cfindObject<volVectorField>(centreName);
-
-        if (normalPtr && centrePtr)
-        {
-            usedMethod_ = methodType::RECONSTRUCTED;
-        }
-        else if (method_ == methodType::RECONSTRUCTED)
-        {
-            FatalErrorInFunction
-                << "Method reconstructed needs the fields " << normalName
-                << " and " << centreName << " of an interface"
-                << " reconstruction, which are not registered"
-                << exit(FatalError);
-        }
-        else
-        {
-            usedMethod_ = methodType::PLIC;
-        }
-    }
-
-    // Point values of alpha for the PLIC normals. The interpolation covers the
-    // whole mesh and is collective, so it is done on all processors.
-    tmp<pointScalarField> tpointAlpha;
-
-    if (usedMethod_ == methodType::PLIC)
-    {
-        tpointAlpha = volPointInterpolation::New(mesh_).interpolate(alpha);
-    }
-
-    // First interface along each line: genuine events (interface inside its
-    // cell, or a sharp jump), and as a fallback an interface plane cutting
-    // the line outside its cell. One reduction over all lines and both.
-    const label nLines = starts_.size();
-    scalarList found(2*nLines, GREAT);
-
-    for (label li = 0; li < nLines; ++li)
-    {
-        if (usedMethod_ == methodType::ALPHA)
-        {
-            found[li] = alphaDistance(li, alpha);
-        }
-        else
-        {
-            firstInterface
-            (
-                li,
-                alpha,
-                normalPtr,
-                centrePtr,
-                tpointAlpha.get(),
-                found[li],
-                found[nLines + li]
-            );
-        }
-    }
-
-    Pstream::listReduce(found, minOp<scalar>());
-
-    scalarList dist(nLines);
-    forAll(dist, li)
-    {
-        dist[li] = (found[li] < 0.5*GREAT ? found[li] : found[nLines + li]);
-    }
-
-    if (Pstream::master())
-    {
-        if (!headerDone_)
-        {
-            writeFileHeader(file());
-            headerDone_ = true;
-        }
-
-        writeCurrentTime(file());
-
-        forAll(dist, li)
-        {
-            if (dist[li] < 0.5*GREAT)
-            {
-                const point p = starts_[li] + dist[li]*dirs_[li];
-
-                file() << tab << dist[li];
-
-                if (useLocations_)
-                {
-                    file() << tab << ((p - locations_[li]) & up_);
-                }
-
-                file() << tab << p.x() << tab << p.y() << tab << p.z();
-            }
-            else
-            {
-                const label nColumns = useLocations_ ? 5 : 4;
-
-                for (label i = 0; i < nColumns; ++i)
-                {
-                    file() << tab << "nan";
-                }
-            }
-        }
-
-        file() << endl;
-    }
+    writePositions();
 
     return true;
 }
@@ -1391,6 +1134,7 @@ void Foam::functionObjects::surfacePosition::updateMesh
 
     update_ = true;
     searchStale_ = true;
+    isoPtr_.reset(nullptr);
 }
 
 

@@ -204,7 +204,7 @@ functions
         libs            (fieldFunctionObjects);
         locations       $lineLocations;
         alpha           alpha.water;
-        direction       (0 0 1);
+        direction       (0 0 -1);
         writeControl    timeStep;
         writeInterval   1;
     }
@@ -215,23 +215,17 @@ functions
         interpolationScheme cell;
     }
 
-    surfacePositionPlic
+    surfacePosition
     {
         type            surfacePosition;
         libs            (surfacePosition);
         locations       $lineLocations;
         alpha           alpha.water;
-        direction       (0 0 1);
-        method          plic;
+        direction       (0 0 -1);
         writeControl    timeStep;
         writeInterval   1;
     }
 
-    surfacePositionAlpha
-    {
-        $surfacePositionPlic;
-        method          alpha;
-    }
 }
 
 

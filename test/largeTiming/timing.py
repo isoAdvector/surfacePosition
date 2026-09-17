@@ -18,7 +18,7 @@ import sys
 
 import numpy as np
 
-FUNCTION_OBJECTS = ["surfacePosition1", "surfacePositionPlic1", "interfaceHeight1"]
+FUNCTION_OBJECTS = ["surfacePosition1", "interfaceHeight1"]
 
 case = sys.argv[1]
 
@@ -94,25 +94,24 @@ for row, values in cost.items():
 
 
 def elevations(fo, fname):
+    """Times, hB (above the bottom z = 0) and hL per line"""
     p = os.path.join(case, "postProcessing", fo, "0", fname)
     if not os.path.isfile(p):
         return None
     d = np.genfromtxt(p, comments="#")
-    if fname == "height.dat":
-        return d[:, 0], d[:, 1:1 + 2*nLines:2]      # hB above the bottom z = 0
-    return d[:, 0], d[:, 5:1 + 5*nLines:5]
+    return d[:, 0], d[:, 1:1 + 2*nLines:2], d[:, 2:2 + 2*nLines:2]
 
 
 ih = elevations("interfaceHeight1", "height.dat")
-for fo in ("surfacePosition1", "surfacePositionPlic1"):
-    sp = elevations(fo, "surfacePosition.dat")
+for fo in ("surfacePosition1",):
+    sp = elevations(fo, "height.dat")
     if ih is None or sp is None:
         continue
     m = min(len(ih[0]), len(sp[0]))
     d = (sp[1][:m] - ih[1][:m])*1e3
     summary["elevation"][fo] = {
         "mean": float(np.nanmean(d)), "rms": float(np.sqrt(np.nanmean(d**2))),
-        "max": float(np.nanmax(np.abs(d))), "steps": m, "nan": int(np.isnan(sp[1]).sum()),
+        "max": float(np.nanmax(np.abs(d))), "steps": m, "missing": int((sp[2] >= 0.5e15).sum()),
     }
     print(f"{fo} - interfaceHeight1: mean {np.nanmean(d):+.4f} mm, rms {np.sqrt(np.nanmean(d**2)):.4f} mm,"
           f" max {np.nanmax(np.abs(d)):.4f} mm over {m} steps and {nLines} lines")

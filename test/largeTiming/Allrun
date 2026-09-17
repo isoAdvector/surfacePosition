@@ -4,10 +4,10 @@ cd "${0%/*}" || exit 1
 #------------------------------------------------------------------------------
 # Cost of surfacePosition and interfaceHeight in a large parallel case: a 3D
 # standing wave in a closed cube (default 100^3 cells) on many processors,
-# sampled along 50 lines. One run with surfacePosition (reconstructed and
-# plic) and interfaceHeight; OpenFOAM's profiling gives the time of each
-# function object and of the flow solution, from the fields written after
-# NSKIP steps (start-up and line search) to the end of the run.
+# sampled along 50 lines. One run with surfacePosition and interfaceHeight;
+# OpenFOAM's profiling gives the time of each function object and of the flow
+# solution, from the fields written after NSKIP steps (start-up and line
+# search) to the end of the run.
 #
 # Environment variables:
 #   NPROCS   number of processes (default 18)

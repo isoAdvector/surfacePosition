@@ -4,7 +4,8 @@
 #  - the line cells after each rebuild against a full search (log lines of
 #    checkLineCells),
 #  - the interface elevation against interfaceHeight, and that surfacePosition
-#    finds an interface on every line at every time (no nan),
+#    finds every line in the mesh at every time (hL = GREAT marks a line
+#    missing the mesh),
 #  - serial against parallel.
 #
 # Usage: compare.py <case> [<case> ...]   (<case>_parallel is used if present)
@@ -15,6 +16,8 @@ import re
 import sys
 
 import numpy as np
+
+GREAT = 1e15        # OpenFOAM's GREAT (double precision)
 
 
 def rebuilds(log):
@@ -28,12 +31,11 @@ def rebuilds(log):
     return out, len(re.findall(r"^Time = ", text, re.M))
 
 
-def elevation(case, fo, fname, nLines):
-    p = os.path.join(case, "postProcessing", fo, "0", fname)
+def heights(case, fo, nLines):
+    """Times, hB (above the bottom z = 0) and hL per line"""
+    p = os.path.join(case, "postProcessing", fo, "0", "height.dat")
     d = np.genfromtxt(p, comments="#")
-    if fname == "height.dat":
-        return d[:, 0], d[:, 1:1 + 2*nLines:2]          # hB above z = 0
-    return d[:, 0], d[:, 5:1 + 5*nLines:5]
+    return d[:, 0], d[:, 1:1 + 2*nLines:2], d[:, 2:2 + 2*nLines:2]
 
 
 def nLines(case):
@@ -60,31 +62,29 @@ for case in sys.argv[1:]:
                 failures.append(f"{run} {name}: line cells")
             print(f"  {name}: {k} rebuilds after mesh changes, {c} line cells in total,"
                   f" missing {m}, extra {e}: {status}")
-        t, ih = elevation(run, "interfaceHeight1", "height.dat", n)
-        for fo in ("surfacePosition1", "surfacePositionPlic1"):
-            ts, sp = elevation(run, fo, "surfacePosition.dat", n)
+        t, ih, _ = heights(run, "interfaceHeight1", n)
+        for fo in ("surfacePosition1",):
+            ts, sp, hL = heights(run, fo, n)
             m = min(len(t), len(ts))
             d = (sp[:m] - ih[:m])*1e3
-            nan = np.argwhere(np.isnan(sp))
+            nan = np.argwhere(hL >= 0.5*GREAT)
             summary["elevation"][fo] = {
                 "mean": float(np.nanmean(d)), "rms": float(np.sqrt(np.nanmean(d**2))),
-                "max": float(np.nanmax(np.abs(d))), "steps": m, "nan": len(nan),
+                "max": float(np.nanmax(np.abs(d))), "steps": m, "missing": len(nan),
             }
             print(f"  {fo} - interfaceHeight1: mean {np.nanmean(d):+.3f} mm, rms {np.sqrt(np.nanmean(d**2)):.3f} mm,"
                   f" max {np.nanmax(np.abs(d)):.3f} mm over {m} steps")
             if len(nan):
                 lines = sorted(set(nan[:, 1]))
-                print(f"  {fo}: NO INTERFACE in {len(nan)} outputs, lines {lines}, from time {ts[nan[0, 0]]}")
-                failures.append(f"{run} {fo}: no interface")
+                print(f"  {fo}: LINE MISSING THE MESH in {len(nan)} outputs, lines {lines}, from time {ts[nan[0, 0]]}")
+                failures.append(f"{run} {fo}: line missing the mesh")
 
     par = case + "_parallel"
     if os.path.isdir(par):
         print(f"--- {case} serial against parallel at the serial times, max |dz|:")
-        for fo, fname in (("surfacePosition1", "surfacePosition.dat"),
-                          ("surfacePositionPlic1", "surfacePosition.dat"),
-                          ("interfaceHeight1", "height.dat")):
-            ts, zs = elevation(case, fo, fname, n)
-            tp, zp = elevation(par, fo, fname, n)
+        for fo in ("surfacePosition1", "interfaceHeight1"):
+            ts, zs, _ = heights(case, fo, n)
+            tp, zp, _ = heights(par, fo, n)
             keep = (ts >= tp[0]) & (ts <= tp[-1])
             d = [np.abs(zs[keep, k] - np.interp(ts[keep], tp, zp[:, k])) for k in range(n)]
             results.setdefault(case + " parallel", {})[fo] = float(np.nanmax(d))

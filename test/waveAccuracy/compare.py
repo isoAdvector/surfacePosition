@@ -17,8 +17,7 @@ import numpy as np
 METHODS = [
     ("interfaceHeight cellPoint", "interfaceHeightCellPoint", "height.dat"),
     ("interfaceHeight cell", "interfaceHeightCell", "height.dat"),
-    ("surfacePosition plic", "surfacePositionPlic", "surfacePosition.dat"),
-    ("surfacePosition alpha", "surfacePositionAlpha", "surfacePosition.dat"),
+    ("surfacePosition", "surfacePosition", "height.dat"),
 ]
 
 
@@ -29,12 +28,8 @@ def table(case, fo, fname):
 def elevation(case, fo, fname, nLines, zBottom):
     d = table(case, fo, fname)
     t = d[:, 0]
-    if fname == "height.dat":
-        # Columns per line: hB (height above the lower boundary), hL
-        z = d[:, 1:1 + 2*nLines:2] + zBottom
-    else:
-        # Columns per line: s, h, x, y, z
-        z = d[:, 5:1 + 5*nLines:5]
+    # Columns per line: hB (height above the lower boundary), hL
+    z = d[:, 1:1 + 2*nLines:2] + zBottom
     return t, z
 
 
