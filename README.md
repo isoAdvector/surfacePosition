@@ -1,4 +1,7 @@
 <!--
+  Copyright (C) 2026 Johan Roenby
+  SPDX-License-Identifier: GPL-3.0-or-later
+
   Written by test/report/makeReadme.py from test/report/README.md.in and the
   results of the executed test suite. Edit the template, not README.md.
 -->
@@ -19,9 +22,9 @@ geometrically with the isosurface of the volume fraction.
 This README is a Markdown version of the report
 [test/report/report.pdf](test/report/report.pdf) on the implementation and the
 test suite in [test](test). All numbers, tables and figures are generated from
-the output of one run of the suite (wall time 1 min 44 s). In a
+the output of one run of the suite (wall time 1 min 42 s). In a
 1 000 000-cell case on 18 processors, `surfacePosition` costs
-4.5 ms per time step for 50 lines, against 1256 ms
+4.4 ms per time step for 50 lines, against 1280 ms
 for `interfaceHeight`; on the exact stream function wave it is more accurate
 than `interfaceHeight` on the same mesh, and it is exact for flat interfaces,
 also on faces and processor boundaries.
@@ -33,6 +36,7 @@ also on faces and processor boundaries.
 3. [Test suite](#3-test-suite)
 4. [Findings of the tests](#4-findings-of-the-tests)
 5. [Reproducing the tests and this README](#5-reproducing-the-tests-and-this-readme)
+6. [License](#license)
 
 ## 1. Usage
 
@@ -410,15 +414,15 @@ of the first steps beyond the steady cost (the line search), in ms.*
 
 | | per step | per line | range | start-up |
 |---|---:|---:|---:|---:|
-| flow solution (`interIsoFoam`) | 739.4 |  | 1.41 |  |
-| `surfacePosition` | 4.5 | 0.090 | 1.77 | 1132 |
-| `interfaceHeight` | 1256.2 | 25.124 | 0.70 |  |
+| flow solution (`interIsoFoam`) | 724.7 |  | 1.46 |  |
+| `surfacePosition` | 4.4 | 0.089 | 2.07 | 1139 |
+| `interfaceHeight` | 1279.7 | 25.594 | 0.71 |  |
 
-`surfacePosition` costs 4.5 ms per step, 0.6 % of the
+`surfacePosition` costs 4.4 ms per step, 0.6 % of the
 flow solution, including the interpolation of α to the mesh points, while
-`interfaceHeight` costs 1256 ms, 170 % of the flow
-solution and 280 times as much as `surfacePosition` (table 5). The
-initial line search of `surfacePosition` takes about 1132 ms once.
+`interfaceHeight` costs 1280 ms, 177 % of the flow
+solution and 289 times as much as `surfacePosition` (table 5). The
+initial line search of `surfacePosition` takes about 1139 ms once.
 The heights of `surfacePosition` and `interfaceHeight` agree to
 0.123 mm (rms 0.026 mm).
 
@@ -474,4 +478,13 @@ cd report
 the `postProcessing` data of the cases; `makeFigures.py` renders the figures
 from the case data with ParaView; `makeReadme.py` writes this README from
 `test/report/README.md.in`. The report and this README were generated from the
-run of 2026-09-17 11:49 (source and tests at revision `63c9f6f`).
+run of 2026-09-17 12:03 (source and tests at revision `c4fe360`).
+
+## License
+
+Copyright (C) 2026 Johan Roenby. `surfacePosition` is an extension of OpenFOAM
+and, like OpenFOAM, free software: you can redistribute it and/or modify it
+under the terms of the GNU General Public License as published by the Free
+Software Foundation, either version 3 of the License, or (at your option) any
+later version. It is distributed in the hope that it will be useful, but
+without any warranty; see [LICENSE](LICENSE) for details.
