@@ -8,8 +8,6 @@
 
 # surfacePosition
 
-*Johan Roenby*
-
 `surfacePosition` is an OpenFOAM (v2512) function object that reports the
 height and position of a volume-of-fluid interface at a set of locations, with
 the same entries and output as OpenFOAM's `interfaceHeight`, which integrates
@@ -31,20 +29,67 @@ also on faces and processor boundaries.
 
 ## Contents
 
-1. [Usage](#1-usage)
-2. [Implementation](#2-implementation)
-3. [Test suite](#3-test-suite)
-4. [Findings of the tests](#4-findings-of-the-tests)
-5. [Reproducing the tests and this README](#5-reproducing-the-tests-and-this-readme)
-6. [License](#license)
+1. [Motivation: `interfaceHeight`](#1-motivation-interfaceheight)
+2. [Usage](#2-usage)
+3. [Implementation](#3-implementation)
+4. [Test suite](#4-test-suite)
+5. [Findings of the tests](#5-findings-of-the-tests)
+6. [Reproducing the tests and this README](#6-reproducing-the-tests-and-this-readme)
+7. [License](#license)
+8. [Author](#author)
 
-## 1. Usage
+## 1. Motivation: `interfaceHeight`
+
+`interfaceHeight` was added to OpenFOAM by the OpenFOAM Foundation in May 2017
+(OpenFOAM-6) and has been in OpenFOAM.com since v2006, which added the optional
+`direction` entry. At every write, it builds for each location a
+`midPointAndFaceSet` along the mesh diagonal through the location in the
+direction, which points downwards (gravity), with a new `meshSearch`; it
+integrates the volume fraction, interpolated to the sampled points (`cellPoint`
+by default), along this line with the trapezoidal rule, and sums the result
+over the processors. The algorithm is the same in all OpenFOAM.com releases
+from v2006 to v2606; the only changes are the writing of the file headers
+(removed in v2012, restored on the master processor in v2406) and the
+documentation (v2512). The OpenFOAM Foundation corrected its parallel operation
+in May 2023 (commit `1d78434bee`, OpenFOAM-11) by skipping sampling segments
+between two faces; OpenFOAM.com does not have this correction.
+
+The tests in this README, with OpenFOAM.com v2512, show the weaknesses of
+`interfaceHeight`:
+
+- *Cost.* The search tree of the mesh is built anew for every location at every
+  write. In a 1 000 000-cell case on 18 processors,
+  `interfaceHeight` costs 1264 ms per time step for 50
+  locations, 173 % of the flow solution itself
+  ([section 4.4](#44-cost-in-a-large-case)).
+- *Parallel runs.* A line on a processor face or edge counts the liquid of the
+  cells on all sides, e.g. twice the height on a processor face (table 3).
+- *Cyclic patches.* A line on a cyclic patch gets half the liquid (table 3).
+- *Locations far from the mesh.* The line has the length of the mesh diagonal
+  around the location; for a location far above or below the mesh it does not
+  reach the mesh, and the height is 0 (table 3).
+- *Accuracy.* With `cell` interpolation the height is biased by a quarter of
+  the cell height, with a sign that follows the direction
+  (-10.0 mm on the medium wave mesh); with `cellPoint` it is
+  unbiased, but less accurate than a geometric cut of the interface cells
+  (table 1).
+
+`surfacePosition` keeps the entries and output of `interfaceHeight`, so that it
+can replace it directly, and addresses these points: the cells of each line are
+found once and followed through mesh changes, so that its cost per write does
+not depend on the mesh size (5.2 ms per step in the same case,
+244 times less); cells covering the same part of a line, also on
+processor and cyclic faces, are averaged; its lines cross the whole mesh
+wherever the location is; and the liquid in the interface cells is measured
+with the isosurface cut of the geometric VoF reconstruction.
+
+## 2. Usage
 
 `surfacePosition` is built into the library `libsurfacePosition` by
 `./Allwmake` (with OpenFOAM v2512 sourced). It links OpenFOAM's
 `finiteVolume`, `meshTools`, `sampling`, `lagrangian` and `geometricVoF`
 libraries. It compiles with OpenFOAM.com v2006 and later
-([section 3.5](#35-compatibility-with-openfoam-versions)). Its entries and
+([section 4.5](#45-compatibility-with-openfoam-versions)). Its entries and
 output are those of `interfaceHeight`, so that a
 dictionary of `interfaceHeight` works after changing its `type` and `libs`, and
 post-processing tools for `interfaceHeight` read its output:
@@ -87,16 +132,16 @@ The `mode` sets which height is reported:
 The headers of both files state the mode in a comment line
 (`# Mode : accumulated`), so the columns are unchanged.
 
-## 2. Implementation
+## 3. Implementation
 
-### 2.1 Lines
+### 3.1 Lines
 
 Through each location a line runs along the unit downward direction
 $\mathbf{t}$ (the `direction` entry, or gravity), from above the mesh to below
 it, across the bounding box of the mesh plus a margin of the box diagonal for
 mesh motion, wherever the location is.
 
-### 2.2 Cells crossed by a line
+### 3.2 Cells crossed by a line
 
 Whether a line $\mathbf{x}(s) = \mathbf{x}_0 + s\,\mathbf{t}$, $0 \le s \le L$,
 crosses a convex cell is decided by clipping the parameter interval against the
@@ -135,7 +180,7 @@ candidate cell reaching a processor face sends the cell on the other side to
 the neighbouring processor, with the number of rings still to search around it.
 All lines are processed together, with one exchange per round, until no
 processor has candidates to send. A line that moves into a neighbouring
-processor subdomain is thereby followed ([section 3.3](#33-moving-meshes)). A
+processor subdomain is thereby followed ([section 4.3](#43-moving-meshes)). A
 line that moves further than the ring limit, or that is connected to its old
 cells only through cyclic faces, is only found by a full search, done every
 `fullSearchInterval` mesh changes if requested.
@@ -145,7 +190,7 @@ all cells of the mesh that cross the line, and the numbers of missing and extra
 cells are written to the log. The test suite uses this to verify the flood
 fill.
 
-### 2.3 Liquid along a line
+### 3.3 Liquid along a line
 
 At each write, each cell of a line contributes the part of its segment
 $[s_\mathrm{in}, s_\mathrm{out}]$ that lies in the liquid:
@@ -170,7 +215,7 @@ The liquid parts of the cells on each processor are merged where they touch,
 so that a column of full cells becomes a single part, and gathered on the
 master processor.
 
-### 2.4 Heights and positions
+### 3.4 Heights and positions
 
 Where several cells cover the same part of a line (a line in a face plane, on an
 edge, or on a processor or cyclic face), their liquid lengths are averaged:
@@ -196,7 +241,7 @@ half of the cells covering it are. The top of the first liquid interval from
 above gives the highest point, and the top of the last run of liquid intervals
 the top of the lowest liquid part.
 
-## 3. Test suite
+## 4. Test suite
 
 The suite (`test/Allrun`) runs four tests, each with a summary log and a
 `results.json` read by the report:
@@ -215,20 +260,11 @@ on the remaining cores. The suite passes if the checks of `specialCases` and
 passed, respectively. All flow cases use OpenFOAM's `interIsoFoam`
 (and `streamFunFoam` for the exact wave, see [test/README.md](test/README.md)).
 
-**About `interfaceHeight`.** `interfaceHeight` was added to OpenFOAM by the
-OpenFOAM Foundation in May 2017 (OpenFOAM-6) and has been in OpenFOAM.com since
-v2006, which added the optional `direction` entry. Its algorithm is the same in
-all OpenFOAM.com releases from v2006 to v2606: for each location it builds a
-`midPointAndFaceSet` along the mesh diagonal in the direction, which points
-downwards (gravity), with a new `meshSearch` at every write, integrates the
-interpolated volume fraction along it and sums the result over the processors.
-The only changes are the writing of the file headers (removed in v2012,
-restored on the master processor in v2406) and the documentation (v2512). The
-OpenFOAM Foundation corrected its parallel operation in May 2023 (commit
-`1d78434bee`, OpenFOAM-11) by skipping sampling segments between two faces;
-OpenFOAM.com does not have this correction. The tests use the v2512 version.
+`interfaceHeight` is described in
+[section 1](#1-motivation-interfaceheight); the tests use its version in
+OpenFOAM.com v2512.
 
-### 3.1 Accuracy: exact stream function wave
+### 4.1 Accuracy: exact stream function wave
 
 `streamFunFoam` sets the fields to an exact stream function wave (height
 0.125 m, depth 0.4 m, period 2 s) in a periodic flume one wave length long, at
@@ -277,7 +313,7 @@ are identical.
 *Figure 2: Error of the elevation over one wave period on the medium mesh, at a
 cell centre and 2 % of a cell width from a face.*
 
-### 3.2 Special cases
+### 4.2 Special cases
 
 A closed 10×10×10 cube, cyclic in x, decomposed into 8 subdomains, holds a flat
 interface (z = 0.537 inside cells, z = 0.5 on internal and processor faces,
@@ -344,7 +380,7 @@ of the special lines, for the flat interface at z = 0.5 and the slab.*
 | 9 | far below | 0.500 | 0.000 | 0.000 | 1.000 | 0.000 | 0.000 |
 | 10 | outside the domain | – | 0.000 | 0.000 | – | 0.000 | 0.000 |
 
-### 3.3 Moving meshes
+### 4.3 Moving meshes
 
 A 2D standing wave (amplitude 0.05 m) in a closed unit box with a 20×20 mesh,
 one cell thick in y, is run with `interIsoFoam` in two variants, in serial and
@@ -395,7 +431,7 @@ and parallel amr runs diverge (`interfaceHeight` differs by up to
 slightly, by up to 0.13 mm in `interfaceHeight` and
 0.21 mm in `surfacePosition`.
 
-### 3.4 Cost in a large case
+### 4.4 Cost in a large case
 
 A 3D standing wave in a closed unit cube with 1 000 000 cells is run with
 `interIsoFoam` on 18 processors (scotch decomposition), with
@@ -428,7 +464,7 @@ initial line search of `surfacePosition` takes about 1147 ms once.
 The heights of `surfacePosition` and `interfaceHeight` agree to
 0.123 mm (rms 0.026 mm).
 
-### 3.5 Compatibility with OpenFOAM versions
+### 4.5 Compatibility with OpenFOAM versions
 
 `test/compatibility/Allrun` (not part of `test/Allrun`) builds
 `surfacePosition` with each installed OpenFOAM.com version that has
@@ -471,7 +507,7 @@ the tests with it, and the reasons for failures.*
 | v2512 | runs | yes | passed | passed |  |
 | v2606 | runs | yes | passed | passed |  |
 
-## 4. Findings of the tests
+## 5. Findings of the tests
 
 Two defects in the line cells of `surfacePosition` were found by the moving
 mesh tests and fixed:
@@ -494,20 +530,21 @@ the moving mesh test, and the check scripts' exit codes are passed on to
 `Allrun`.
 
 Earlier versions of `surfacePosition` reported the crossing of the line with the
-interface plane of one interface cell, the one with α closest to 0.5. In the
-amr runs, droplets with α near 0.5 and steep planes then gave positions up to
-metres outside the domain; the liquid length of section 2.4 removes this. The
-area vector of the isosurface from `surfaceIteratorIso`, documented to point
-from high to low values, gave the liquid on the wrong side in the flat test, so
-the liquid side is taken from the centre of the submerged part of the cell
-instead.
+interface plane of one interface cell, the one with α closest to 0.5. In the amr
+runs, droplets with α near 0.5 and steep planes then gave positions up to metres
+outside the domain; the liquid length of [section
+3.4](#34-heights-and-positions) removes this. The area vector of the isosurface
+from `surfaceIteratorIso`, documented to point from high to low values, gave the
+liquid on the wrong side in the flat test, so the liquid side is taken from the
+centre of the submerged part of the cell instead.
 
 The tests also show that `interfaceHeight` (v2512) is wrong on processor faces
 and edges, on cyclic patches, and for locations outside the vertical extent of
 the mesh (table 3). The first may be what the OpenFOAM Foundation's parallel
-correction addresses ([section 3](#3-test-suite)); this was not tested.
+correction addresses ([section 1](#1-motivation-interfaceheight)); this was not
+tested.
 
-## 5. Reproducing the tests and this README
+## 6. Reproducing the tests and this README
 
 With OpenFOAM v2512 sourced, in this repository:
 
@@ -519,7 +556,7 @@ cd report
 ./Allrun              # makeData.py, makeFigures.py (pvbatch), report.pdf, README.md
 ```
 
-Section 3.5 needs `test/compatibility/Allrun` to have been run before
+Section 4.5 needs `test/compatibility/Allrun` to have been run before
 `test/report/Allrun`; it builds and tests with every OpenFOAM.com installation
 found in `~/OpenFOAM` (or `FOAM_INSTALLS`) and takes about eight minutes.
 
@@ -537,3 +574,7 @@ under the terms of the GNU General Public License as published by the Free
 Software Foundation, either version 3 of the License, or (at your option) any
 later version. It is distributed in the hope that it will be useful, but
 without any warranty; see [LICENSE](LICENSE) for details.
+
+## Author
+
+Johan Roenby

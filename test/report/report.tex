@@ -64,6 +64,56 @@ also on faces and processor boundaries.
 \end{abstract}
 
 % --------------------------------------------------------------------------- %
+\section{Motivation: \iH{}}
+\label{sec:motivation}
+
+\iH{} was added to OpenFOAM by the OpenFOAM Foundation in May 2017
+(OpenFOAM-6) and has been in OpenFOAM.com since v2006, which added the
+optional \texttt{direction} entry. At every write, it builds for each location
+a \texttt{midPointAndFaceSet} along the mesh diagonal through the location in
+the direction, which points downwards (gravity), with a new
+\texttt{meshSearch}; it integrates the volume fraction, interpolated to the
+sampled points (\texttt{cellPoint} by default), along this line with the
+trapezoidal rule, and sums the result over the processors. The algorithm is
+the same in all OpenFOAM.com releases from v2006 to v2606; the only changes
+are the writing of the file headers (removed in v2012, restored on the master
+processor in v2406) and the documentation (v2512). The OpenFOAM Foundation
+corrected its parallel operation in May 2023 (commit \texttt{1d78434bee},
+OpenFOAM-11) by skipping sampling segments between two faces; OpenFOAM.com
+does not have this correction.
+
+The tests in this report (with OpenFOAM.com v2512) show these weaknesses of
+\iH{}:
+\begin{itemize}
+\item \emph{Cost.} The search tree of the mesh is built anew for every
+  location at every write. In a \timingCells-cell case on \timingProcs{}
+  processors, \iH{} costs \SI{\timingIH}{ms} per time step for \timingLines{}
+  locations, \timingIHFraction{}\,\% of the flow solution itself
+  (section~\ref{sec:cost}).
+\item \emph{Parallel runs.} A line on a processor face or edge counts the
+  liquid of the cells on all sides, e.g.\ twice the height on a processor
+  face (table~\ref{tab:specialIH}).
+\item \emph{Cyclic patches.} A line on a cyclic patch gets half the liquid
+  (table~\ref{tab:specialIH}).
+\item \emph{Locations far from the mesh.} The line has the length of the mesh
+  diagonal around the location; for a location far above or below the mesh it
+  does not reach the mesh, and the height is 0 (table~\ref{tab:specialIH}).
+\item \emph{Accuracy.} With \texttt{cell} interpolation the height is biased
+  by a quarter of the cell height, with a sign that follows the direction
+  (\SI{\waveMediumCellMean}{mm} on the medium wave mesh); with
+  \texttt{cellPoint} it is unbiased, but less accurate than a geometric cut
+  of the interface cells (table~\ref{tab:wave}).
+\end{itemize}
+\sP{} keeps the entries and output of \iH{}, so that it can replace it
+directly, and addresses these points: the cells of each line are found once
+and followed through mesh changes, so that its cost per write does not depend
+on the mesh size (\SI{\timingSP}{ms} per step in the same case,
+\timingRatio{} times less); cells covering the same part of a line, also on
+processor and cyclic faces, are averaged; its lines cross the whole mesh
+wherever the location is; and the liquid in the interface cells is measured
+with the isosurface cut of the geometric VoF reconstruction.
+
+% --------------------------------------------------------------------------- %
 \section{Usage}
 
 \sP{} is built into the library \texttt{libsurfacePosition} by
@@ -193,6 +243,7 @@ so that a column of full cells becomes a single part, and gathered on the
 master processor.
 
 \subsection{Heights and positions}
+\label{sec:heights}
 Where several cells cover the same part of a line (a line in a face plane, on
 an edge, or on a processor or cyclic face), their liquid lengths are
 averaged: after every mesh change the ends of the segments of all line cells,
@@ -240,20 +291,8 @@ tests run on the remaining cores. The suite passes if the checks of
 \texttt{specialCases} and \texttt{movingMesh} pass; in the run reported here
 they \specialPassed{} and \movingPassed{}, respectively.
 
-\paragraph{About \iH{}.}
-\iH{} was added to OpenFOAM by the OpenFOAM Foundation in May 2017
-(OpenFOAM-6) and has been in OpenFOAM.com since v2006, which added the
-optional \texttt{direction} entry. Its algorithm is the same in all
-OpenFOAM.com releases from v2006 to v2606: for each location it builds a
-\texttt{midPointAndFaceSet} along the mesh diagonal in the direction, which
-points downwards (gravity), with a new
-\texttt{meshSearch} at every write, integrates the interpolated volume fraction
-along it and sums the result over the processors. The only changes are the
-writing of the file headers (removed in v2012, restored on the master
-processor in v2406) and the documentation (v2512). The OpenFOAM Foundation
-corrected its parallel operation in May 2023 (commit \texttt{1d78434bee},
-OpenFOAM-11) by skipping sampling segments between two faces; OpenFOAM.com
-does not have this correction. The tests use the v2512 version.
+\iH{} is described in section~\ref{sec:motivation}; the tests use its version
+in OpenFOAM.com v2512.
 
 \subsection{Accuracy: exact stream function wave}
 
@@ -468,6 +507,7 @@ runs, serial and parallel flows differ slightly, by up to
 \sP{}.
 
 \subsection{Cost in a large case}
+\label{sec:cost}
 
 A 3D standing wave in a closed unit cube with \timingCells{} cells is run with
 \texttt{\timingSolver} on \timingProcs{} processors (scotch decomposition), with
@@ -577,8 +617,8 @@ fail the moving mesh test, and the check scripts' exit codes are passed on to
 Earlier versions of \sP{} reported the crossing of the line with the
 interface plane of one interface cell, the one with $\alpha$ closest to 0.5.
 In the amr runs, droplets with $\alpha$ near 0.5 and steep planes then gave
-positions up to metres outside the domain; the liquid length of section 2.4
-removes this. The area vector of the isosurface from
+positions up to metres outside the domain; the liquid length of
+section~\ref{sec:heights} removes this. The area vector of the isosurface from
 \texttt{surfaceIteratorIso}, documented to point from high to low values, gave
 the liquid on the wrong side in the flat test, so the liquid side is taken
 from the centre of the submerged part of the cell instead.
@@ -586,7 +626,8 @@ from the centre of the submerged part of the cell instead.
 The tests also show that \iH{} (v2512) is wrong on processor faces and edges,
 on cyclic patches, and for locations outside the vertical extent of the mesh
 (table~\ref{tab:specialIH}). The first may be what the OpenFOAM Foundation's
-parallel correction addresses (section~\ref{sec:tests}); this was not tested.
+parallel correction addresses (section~\ref{sec:motivation}); this was not
+tested.
 
 % --------------------------------------------------------------------------- %
 \section{Reproducing this report}
@@ -598,7 +639,8 @@ cd test
 ./Allrun              # the test suite, results.json per test
 cd report
 ./Allrun              # makeData.py, makeFigures.py (pvbatch), latexmk
-                      # (after ../compatibility/Allrun for section 3.5)
+                      # (after ../compatibility/Allrun for the
+                      # compatibility section)
 \end{lstlisting}
 \texttt{makeData.py} writes the numbers and tables in \texttt{generated/}
 from the \texttt{results.json} files and the \texttt{postProcessing} data of
