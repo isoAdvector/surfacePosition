@@ -1,0 +1,9 @@
+# Intermediate files of the report (figures/, report.pdf and ../../README.md
+# are committed)
+generated/
+*.aux
+*.log
+*.fls
+*.fdb_latexmk
+*.out
+waveErrorFigure.pdf

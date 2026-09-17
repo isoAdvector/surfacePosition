@@ -9,11 +9,3 @@ __pycache__/
 specialCases/flat*/
 specialCases/slab*/
 results.json
-report/generated/
-report/figures/
-report/*.aux
-report/*.log
-report/*.fls
-report/*.fdb_latexmk
-report/*.out
-report/report.pdf
