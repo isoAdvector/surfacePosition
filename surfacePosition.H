@@ -120,6 +120,7 @@ Note
       interfaceHeight does.
     - The library links OpenFOAM's geometricVoF. With a solver linking a
       modified copy of it, both are loaded.
+    - Compiles with OpenFOAM.com v2006 and later (tested up to v2606).
 
 SourceFiles
     surfacePosition.C

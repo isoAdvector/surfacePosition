@@ -6,7 +6,8 @@ cd "${0%/*}" || exit 1
 #------------------------------------------------------------------------------
 # surfacePosition on changing meshes: a 2D standing wave with adaptive mesh
 # refinement (amr) and with a solid body oscillation of the mesh (motion),
-# each in serial and parallel, compared with interfaceHeight. checkLineCells
+# each in serial and parallel (only serial if SERIAL_ONLY is set), compared
+# with interfaceHeight. checkLineCells
 # compares the line cells after every rebuild with a full search.
 #------------------------------------------------------------------------------
 
@@ -37,19 +38,26 @@ do
         runApplication setAlphaField
     )
 
-    cp -r "$name" "${name}_parallel"
-    foamDictionary -entry numberOfSubdomains -set "$nProcs" \
-        "${name}_parallel/system/decomposeParDict" > /dev/null
-
     app=$(foamDictionary -entry application -value "$name/system/controlDict")
 
-    # Serial and parallel at the same time
+    # Serial and parallel (unless SERIAL_ONLY is set) at the same time
+    if [ -z "$SERIAL_ONLY" ]
+    then
+        cp -r "$name" "${name}_parallel"
+        foamDictionary -entry numberOfSubdomains -set "$nProcs" \
+            "${name}_parallel/system/decomposeParDict" > /dev/null
+    fi
+
     ( cd "$name" && runApplication "$app" ) &
-    (
-        cd "${name}_parallel" || exit 1
-        runApplication decomposePar -cellDist
-        runParallel "$app"
-    )
+
+    if [ -z "$SERIAL_ONLY" ]
+    then
+        (
+            cd "${name}_parallel" || exit 1
+            runApplication decomposePar -cellDist
+            runParallel "$app"
+        )
+    fi
     wait
 done
 

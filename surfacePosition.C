@@ -37,6 +37,100 @@ License
 #include "FixedList.H"
 #include "addToRunTimeSelectionTable.H"
 
+#include <type_traits>
+
+// * * * * * * * * * * * * * * * Local Functions * * * * * * * * * * * * * * //
+
+// Compatibility with OpenFOAM.com v2006 and later: DynamicList::push_back came
+// with v2212 (append before), and Pstream::listGatherValues gathers
+// non-contiguous types only from v2406
+
+namespace
+{
+
+using namespace Foam;
+
+//- Append an element to a list
+template<class T, int SizeMin>
+inline void pushBack
+(
+    DynamicList<T, SizeMin>& list,
+    const typename std::common_type<T>::type& val
+)
+{
+#if (OPENFOAM >= 2212)
+    list.push_back(val);
+#else
+    list.append(val);
+#endif
+}
+
+
+//- The last element of a list
+template<class T, int SizeMin>
+inline T& lastItem(DynamicList<T, SizeMin>& list)
+{
+    return list[list.size() - 1];
+}
+
+
+//- Remove the last element of a list and return it
+template<class T, int SizeMin>
+inline T popBack(DynamicList<T, SizeMin>& list)
+{
+    T val(list[list.size() - 1]);
+    list.resize(list.size() - 1);
+    return val;
+}
+
+
+//- The values of all processors, on the master (empty on the others)
+template<class T>
+List<T> gatherToMaster(const T& local)
+{
+    List<T> all;
+
+    if (!UPstream::parRun())
+    {
+        all.resize(1);
+        all[0] = local;
+        return all;
+    }
+
+    PstreamBuffers pBufs(UPstream::commsTypes::nonBlocking);
+
+    if (!UPstream::master())
+    {
+        UOPstream toMaster(UPstream::masterNo(), pBufs);
+        toMaster << local;
+    }
+
+    pBufs.finishedSends();
+
+    if (UPstream::master())
+    {
+        all.resize(UPstream::nProcs());
+
+        forAll(all, proci)
+        {
+            if (proci == UPstream::masterNo())
+            {
+                all[proci] = local;
+            }
+            else
+            {
+                UIPstream fromProc(proci, pBufs);
+                fromProc >> all[proci];
+            }
+        }
+    }
+
+    return all;
+}
+
+} // End anonymous namespace
+
+
 // * * * * * * * * * * * * * * Static Data Members * * * * * * * * * * * * * //
 
 namespace Foam
@@ -244,7 +338,7 @@ void Foam::functionObjects::surfacePosition::searchSeeds
         for (label i = 0; i < nPoints; ++i)
         {
             const point p(start + (s0 + (i + 0.5)*(s1 - s0)/nPoints)*dir);
-            found.push_back(searchPtr_->findNearestCell(p));
+            pushBack(found, searchPtr_->findNearestCell(p));
         }
     }
 
@@ -289,8 +383,9 @@ void Foam::functionObjects::surfacePosition::floodLineCells
         const label patchi = pbm.whichPatch(facei);
         if (isA<processorPolyPatch>(pbm[patchi]))
         {
-            send[patchi].push_back
+            pushBack
             (
+                send[patchi],
                 FixedList<label, 3>({li, facei - pbm[patchi].start(), n})
             );
         }
@@ -302,7 +397,7 @@ void Foam::functionObjects::surfacePosition::floodLineCells
         {
             if (celli >= 0 && celli < mesh_.nCells())
             {
-                rings[li].push_back(cellRings({celli, maxRings}));
+                pushBack(rings[li], cellRings({celli, maxRings}));
             }
         }
     }
@@ -335,8 +430,8 @@ void Foam::functionObjects::surfacePosition::floodLineCells
 
                     if (crossesLine(celli, li))
                     {
-                        fnd.push_back(celli);
-                        frt.push_back(celli);
+                        pushBack(fnd, celli);
+                        pushBack(frt, celli);
                     }
                     else if (wasEmpty && cr[1] > 0)
                     {
@@ -344,8 +439,9 @@ void Foam::functionObjects::surfacePosition::floodLineCells
                         {
                             if (mesh_.isInternalFace(facei))
                             {
-                                next.push_back
+                                pushBack
                                 (
+                                    next,
                                     cellRings
                                     ({
                                         own[facei] == celli
@@ -357,7 +453,7 @@ void Foam::functionObjects::surfacePosition::floodLineCells
                             }
                             else
                             {
-                                across.push_back(cellRings({facei, cr[1] - 1}));
+                                pushBack(across, cellRings({facei, cr[1] - 1}));
                             }
                         }
                     }
@@ -380,8 +476,7 @@ void Foam::functionObjects::surfacePosition::floodLineCells
             // Flood fill from the cells crossing the line
             while (!frt.empty())
             {
-                const label celli = frt.back();
-                frt.pop_back();
+                const label celli = popBack(frt);
 
                 for (const label facei : meshCells[celli])
                 {
@@ -396,8 +491,8 @@ void Foam::functionObjects::surfacePosition::floodLineCells
 
                     if (vis.insert(nbr) && crossesLine(nbr, li))
                     {
-                        fnd.push_back(nbr);
-                        frt.push_back(nbr);
+                        pushBack(fnd, nbr);
+                        pushBack(frt, nbr);
                     }
                 }
             }
@@ -421,7 +516,7 @@ void Foam::functionObjects::surfacePosition::floodLineCells
 
         // Exchange the candidates, in the same order of the processor patches
         // on both sides
-        PstreamBuffers pBufs;
+        PstreamBuffers pBufs(UPstream::commsTypes::nonBlocking);
 
         forAll(pbm, patchi)
         {
@@ -461,7 +556,7 @@ void Foam::functionObjects::surfacePosition::floodLineCells
                 {
                     if (!visited[li].found(celli))
                     {
-                        rings[li].push_back(cellRings({celli, r[2]}));
+                        pushBack(rings[li], cellRings({celli, r[2]}));
                     }
                 }
                 else if
@@ -471,8 +566,8 @@ void Foam::functionObjects::surfacePosition::floodLineCells
                 )
                 {
                     // Neighbour of a cell crossing the line on the other side
-                    found[li].push_back(celli);
-                    front[li].push_back(celli);
+                    pushBack(found[li], celli);
+                    pushBack(front[li], celli);
                 }
             }
         }
@@ -530,7 +625,7 @@ void Foam::functionObjects::surfacePosition::calcCover()
 
     const List<List<List<Pair<scalar>>>> all
     (
-        Pstream::listGatherValues(local)
+        gatherToMaster(local)
     );
 
     if (!Pstream::master())
@@ -551,8 +646,8 @@ void Foam::functionObjects::surfacePosition::calcCover()
         {
             for (const Pair<scalar>& seg : proc[li])
             {
-                ends.push_back(seg.first());
-                ends.push_back(seg.second());
+                pushBack(ends, seg.first());
+                pushBack(ends, seg.second());
             }
         }
 
@@ -658,7 +753,7 @@ void Foam::functionObjects::surfacePosition::calcLineCells()
             {
                 if (crossesLine(celli, li))
                 {
-                    reference.push_back(celli);
+                    pushBack(reference, celli);
                 }
             }
 
@@ -729,13 +824,13 @@ void Foam::functionObjects::surfacePosition::liquidParts
         {
             return;
         }
-        if (found.size() && found.back().second() == s0)
+        if (found.size() && lastItem(found).second() == s0)
         {
-            found.back().second() = s1;
+            lastItem(found).second() = s1;
         }
         else
         {
-            found.push_back(Pair<scalar>(s0, s1));
+            pushBack(found, Pair<scalar>(s0, s1));
         }
     };
 
@@ -883,10 +978,10 @@ void Foam::functionObjects::surfacePosition::lineHeight
     {
         for (const Pair<scalar>& part : proc[li])
         {
-            ends.push_back(part.first());
-            ends.push_back(part.second());
-            events.push_back(Pair<scalar>(part.first(), 1));
-            events.push_back(Pair<scalar>(part.second(), -1));
+            pushBack(ends, part.first());
+            pushBack(ends, part.second());
+            pushBack(events, Pair<scalar>(part.first(), 1));
+            pushBack(events, Pair<scalar>(part.second(), -1));
         }
     }
 
@@ -1064,7 +1159,7 @@ void Foam::functionObjects::surfacePosition::writePositions()
 
     const List<List<List<Pair<scalar>>>> allParts
     (
-        Pstream::listGatherValues(local)
+        gatherToMaster(local)
     );
 
     if (!Pstream::master())
@@ -1252,7 +1347,7 @@ void Foam::functionObjects::surfacePosition::updateMesh
 
             if (newCelli >= 0)
             {
-                newCells.push_back(newCelli);
+                pushBack(newCells, newCelli);
             }
         }
 

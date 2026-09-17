@@ -7,7 +7,8 @@ cd "${0%/*}" || exit 1
 # Special cases for surfacePosition: interfaces and lines on faces, edges and
 # points of the mesh, on processor and cyclic faces, and line locations
 # outside the mesh. One short interIsoFoam step per scenario, in serial and
-# on 8 processors, checked against the exact positions by check.py.
+# on 8 processors (only serial if SERIAL_ONLY is set), checked against the
+# exact positions by check.py.
 #------------------------------------------------------------------------------
 
 # name origin normal (water on the side the normal points to); layers adds a
@@ -37,10 +38,10 @@ do
         fi
     )
 
-    cp -r "$name" "${name}_parallel"
+    [ -n "$SERIAL_ONLY" ] || cp -r "$name" "${name}_parallel"
 
     ( cd "$name" && runApplication interIsoFoam )
-    (
+    [ -n "$SERIAL_ONLY" ] || (
         cd "${name}_parallel" || exit 1
         runApplication decomposePar -cellDist
         runParallel interIsoFoam

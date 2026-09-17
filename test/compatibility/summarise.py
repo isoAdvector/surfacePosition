@@ -44,14 +44,29 @@ def compile_errors(log):
 
 
 def fatal_error(testDir):
-    """First line of the first FOAM FATAL ERROR in the logs of a test"""
+    """The first fatal error in the logs of a test: the first line of a FOAM
+    FATAL ERROR, or a crash with the innermost OpenFOAM function of its stack
+    trace and whether surfacePosition is in the trace"""
     for log in sorted(glob.glob(os.path.join(testDir, "*", "log.*"))):
+        case = os.path.basename(os.path.dirname(log))
         lines = open(log, errors="replace").read().splitlines()
         for i, line in enumerate(lines):
             if "FOAM FATAL" in line:
                 for text in lines[i + 1:]:
                     if text.strip():
-                        return f"{os.path.basename(os.path.dirname(log))}: {text.strip()}"
+                        return f"{case}: {text.strip()}"
+            m = re.search(r"Foam::(sigFpe|sigSegv)::sigHandler", line)
+            if m:
+                kind = "floating point exception" if m.group(1) == "sigFpe" else "segmentation fault"
+                where = ""
+                for text in lines[i + 1:i + 6]:
+                    f = re.search(r"#\d+\s+(Foam::[A-Za-z_:]+)", text)
+                    if f:
+                        where = f" in {f.group(1)}"
+                        break
+                trace = "\n".join(lines[i + 1:i + 30])
+                origin = "surfacePosition" if "surfacePosition" in trace else "solver"
+                return f"{case}: {kind}{where} ({origin})"
     return None
 
 
@@ -76,7 +91,16 @@ for w in sorted(glob.glob(os.path.join(work, "v*"))):
     for t in ("specialCases", "movingMesh"):
         s = read(os.path.join(w, t, "status"))
         if s is not None:
-            r["tests"][t] = {"passed": s == "0", "error": None if s == "0" else fatal_error(os.path.join(w, t))}
+            error = None
+            if s == "124" or s == "137":
+                error = "time limit reached"
+            elif s != "0":
+                error = fatal_error(os.path.join(w, t))
+            without = read(os.path.join(w, t, "withoutFO", "result"))
+            r["tests"][t] = {
+                "passed": s == "0", "error": error,
+                "withoutFunctionObjects": without.splitlines() if without else [],
+            }
 
 with open("results.json", "w") as f:
     json.dump(results, f, indent=1)
@@ -94,3 +118,5 @@ for v, r in results.items():
     for t, s in r["tests"].items():
         if s["error"]:
             print(f"         {t}: {s['error']}")
+        for line in s["withoutFunctionObjects"]:
+            print(f"         {t} without function objects: {line}")

@@ -23,7 +23,7 @@ All flow cases use OpenFOAM's `interIsoFoam`.
 `compatibility/Allrun` (not run by `./Allrun`) builds `surfacePosition` with
 every OpenFOAM.com installation with `geometricVoF` in `~/OpenFOAM` (or
 `FOAM_INSTALLS`) and runs `specialCases` and `movingMesh` with each; it writes
-`compatibility/log.compatibility` and takes about five minutes.
+`compatibility/log.compatibility` and takes about eight minutes.
 
 `waveAccuracy` needs `streamFunFoam` and `libstreamFunctionWaveFvPatchField`
 from the `streamFunctionWave` repository, found next to this repository or

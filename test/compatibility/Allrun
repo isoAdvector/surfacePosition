@@ -11,16 +11,22 @@ cd "${0%/*}" || exit 1
 #   - does surfacePosition compile with it (library in work/<version>/lib)?
 #     If coordSet.H is not found (before v2206), it is built again with
 #     fileFormats on the include path to list the remaining errors.
-#   - do the specialCases and movingMesh tests pass with that library (only
-#     with a working MPI, as the tests also run in parallel)?
-# The versions are tested at the same time, in two groups on the two halves
-# of the cores. Writes log.compatibility and results.json (summarise.py).
+#   - do the specialCases and movingMesh tests pass with that library (in
+#     serial and parallel, or only in serial without a working MPI)? The
+#     cases of a failed test whose solver did not finish are run again
+#     without function objects (withoutFunctionObjects.py), to see whether
+#     the failure is the solver's.
+# The versions are tested at the same time, in groups on 8 cores each.
+# Writes log.compatibility and results.json (summarise.py).
 #
 # Environment variables:
 #   FOAM_INSTALLS   directory with the OpenFOAM-<version> installations
+#   TIME_LIMIT      time limit of each test and solver run in seconds
+#                   (default 150), for solvers that diverge instead of failing
 #------------------------------------------------------------------------------
 
 installs=${FOAM_INSTALLS:-$HOME/OpenFOAM}
+timeLimit=${TIME_LIMIT:-150}
 src=$(cd ../.. && pwd)
 work=$(pwd)/work
 
@@ -94,34 +100,85 @@ check()
             cd $w/src2 && wmake libso" > "$w/log.wmake2" 2>&1
     fi
 
-    [ "$(cat "$w/compiled")" = 0 ] && [ -z "$mplib" ] || return
+    [ "$(cat "$w/compiled")" = 0 ] || return
+
+    # Without a working MPI, the tests run only in serial
+    local serial=""
+    [ -n "$mplib" ] && serial="export SERIAL_ONLY=1"
 
     cp -r "$src/test/specialCases" "$src/test/movingMesh" "$w/"
     for t in specialCases movingMesh
     do
         "$w/$t/Allclean" > /dev/null 2>&1
-        bash -c "source $d/etc/bashrc >/dev/null 2>&1
+        bash -c "source $d/etc/bashrc $mplib >/dev/null 2>&1
             export FOAM_USER_LIBBIN=$w/lib
             export LD_LIBRARY_PATH=$w/lib:\$LD_LIBRARY_PATH
             export OMPI_MCA_hwloc_base_binding_policy=none
-            taskset -c $cores $w/$t/Allrun" > "$w/$t/log.Allrun" 2>&1
-        echo $? > "$w/$t/status"
+            $serial
+            timeout --kill-after=10 $timeLimit taskset -c $cores $w/$t/Allrun" \
+            > "$w/$t/log.Allrun" 2>&1
+        local status=$?
+        echo $status > "$w/$t/status"
+        [ $status = 0 ] && continue
+
+        # Cases whose solver did not finish, again without function objects
+        local c name nProcs app
+        for c in "$w/$t"/*/
+        do
+            name=$(basename "$c")
+            [ -f "$c/system/controlDict" ] && [ "$name" != baseCase ] || continue
+            app=$(sed -n 's/^application *\([^;]*\);.*/\1/p' "$c/system/controlDict")
+            [ -f "$c/log.$app" ] && ! grep -q "^End" "$c/log.$app" || continue
+
+            cp -r "$c" "$w/$t/withoutFO/$name" 2>/dev/null \
+             || { mkdir -p "$w/$t/withoutFO" && cp -r "$c" "$w/$t/withoutFO/$name"; }
+            python3 withoutFunctionObjects.py "$w/$t/withoutFO/$name"
+            nProcs=$(ls -d "$c"/processor* 2>/dev/null | wc -l)
+
+            bash -c "source $d/etc/bashrc $mplib >/dev/null 2>&1
+                export OMPI_MCA_hwloc_base_binding_policy=none
+                cd $w/$t/withoutFO/$name || exit 1
+                if [ $nProcs -gt 0 ]
+                then
+                    timeout --kill-after=10 $timeLimit taskset -c $cores \
+                        mpirun -np $nProcs $app -parallel > log.$app 2>&1
+                else
+                    timeout --kill-after=10 $timeLimit taskset -c $cores \
+                        $app > log.$app 2>&1
+                fi"
+            if grep -q "^End" "$w/$t/withoutFO/$name/log.$app"
+            then
+                echo "$name finishes" >> "$w/$t/withoutFO/result"
+            else
+                echo "$name fails" >> "$w/$t/withoutFO/result"
+            fi
+        done
     done
 }
 
+# The versions in nGroups groups at the same time, each on its own cores
+# (the largest test uses 8 processes), each group one version after another
 nCores=$(lscpu -p=CORE | grep -v '^#' | sort -un | wc -l)
-half=$((nCores/2))
+nGroups=$((nCores/8 > 0 ? nCores/8 : 1))
+groupCores=$((nCores/nGroups))
+declare -a groups
 group=0
-declare -a groups=("" "")
 for v in $versions
 do
     groups[$group]="${groups[$group]} $v"
-    group=$((1 - group))
+    group=$(((group + 1) % nGroups))
 done
 
 echo "Versions: $(echo $versions)"
-( for v in ${groups[0]}; do check "$v" "${dirs[$v]}" "0-$((half - 1))"; done ) &
-( for v in ${groups[1]}; do check "$v" "${dirs[$v]}" "$half-$((nCores - 1))"; done ) &
+for ((g = 0; g < nGroups; ++g))
+do
+    (
+        for v in ${groups[$g]}
+        do
+            check "$v" "${dirs[$v]}" "$((g*groupCores))-$(((g + 1)*groupCores - 1))"
+        done
+    ) &
+done
 wait
 
 python3 summarise.py "$work" | tee log.compatibility
