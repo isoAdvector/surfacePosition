@@ -102,7 +102,7 @@ surfacePosition1
     locations       ((0 0 0) (10 0 0) (20 0 0));
     alpha           alpha.water;    // default alpha
     liquid          true;           // alpha is the liquid's
-    direction       (0 0 -1);       // downwards, default gravity
+    direction       (0 0 -1);       // downwards (default: gravity)
     mode            accumulated;    // accumulated, highest or lowest
     surfCellTol     1e-8;           // interface cells
     isoFaceTol      1e-8;           // tolerance of the isosurface cut
@@ -111,7 +111,11 @@ surfacePosition1
 }
 ```
 
-The `interfaceHeight` entry `interpolationScheme` is not used. The files
+The `interfaceHeight` entry `interpolationScheme` is not used. As in
+`interfaceHeight`, the `direction` points downwards, along gravity, and the
+heights are measured against it; `interfaceHeight`'s documentation calls it the
+direction of the interface, which is easily read as upwards. A `direction`
+against gravity gives a warning. The files
 `height.dat` and `position.dat` in `postProcessing/<name>/<time>` hold, per
 location, the height $h_B$ of the liquid (in the mode, below) above the lower
 boundary, where the line leaves the mesh along the direction, the height

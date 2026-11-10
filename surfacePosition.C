@@ -160,15 +160,28 @@ Foam::functionObjects::surfacePosition::modeTypeNames_
 
 void Foam::functionObjects::surfacePosition::setLines()
 {
+    const auto* gPtr =
+        mesh_.time().cfindObject<uniformDimensionedVectorField>("g");
+
     if (mag(direction_) > VSMALL)
     {
         down_ = direction_/mag(direction_);
+
+        // The direction points downwards, as in interfaceHeight, whose
+        // documentation calls it the direction of the interface: a direction
+        // against gravity is most likely an upward one given by mistake
+        if (gPtr && (down_ & gPtr->value()) < 0)
+        {
+            WarningInFunction
+                << type() << ' ' << name() << ": direction " << direction_
+                << " points against gravity " << gPtr->value() << nl
+                << "    The direction points downwards, along gravity, as in"
+                << " interfaceHeight; the heights are measured against it."
+                << endl;
+        }
     }
     else
     {
-        const auto* gPtr =
-            mesh_.time().cfindObject<uniformDimensionedVectorField>("g");
-
         if (!gPtr || mag(gPtr->value()) < VSMALL)
         {
             FatalErrorInFunction

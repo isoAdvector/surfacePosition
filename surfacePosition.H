@@ -35,7 +35,10 @@ Description
     that does not depend on the mesh size.
 
     Through each location a line runs along the direction (default: gravity)
-    across the whole mesh, wherever the location is. The height of the liquid
+    across the whole mesh, wherever the location is. The direction points
+    downwards, along gravity, as in interfaceHeight, and the heights are
+    measured against it; a direction against gravity gives a warning. The
+    height of the liquid
     along the line is the sum of the lengths of the line inside the liquid:
     the whole segment in full cells, nothing in empty cells, and in interface
     cells (surfCellTol < alpha < 1 - surfCellTol) the part on the liquid side
@@ -86,7 +89,7 @@ Usage
         // Optional entries, as for interfaceHeight
         alpha           alpha.water;    // default: alpha
         liquid          true;           // alpha is the liquid's
-        direction       (0 0 -1);       // default: gravity
+        direction       (0 0 -1);       // downwards (default: gravity)
 
         // Optional entries
         mode            accumulated;    // accumulated, highest or lowest
