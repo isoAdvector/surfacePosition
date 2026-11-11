@@ -600,7 +600,7 @@ found in `~/OpenFOAM` (or `FOAM_INSTALLS`) and takes about eight minutes.
 the `postProcessing` data of the cases; `makeFigures.py` renders the figures
 from the case data with ParaView; `makeReadme.py` writes this README from
 `test/report/README.md.in`. The report and this README were generated from the
-run of 2026-09-17 18:10 (source and tests at revision `9f21588`).
+run of 2026-09-17 18:10 (source and tests at revision `6200116`).
 
 ## License
 
