@@ -8,6 +8,8 @@
 
 # surfacePosition
 
+Developed and maintained by Johan Roenby, [STROMNING](https://stromning.com).
+
 `surfacePosition` is an OpenFOAM.com function object that reports the
 height and position of a volume-of-fluid interface at a set of locations, with
 the same entries and output as OpenFOAM's `interfaceHeight`, which integrates
@@ -591,4 +593,7 @@ without any warranty; see [LICENSE](LICENSE) for details.
 
 ## Author
 
-Johan Roenby
+Johan Roenby, [STROMNING](https://stromning.com). STROMNING offers consulting,
+custom development, training and support for interfacial and multiphase flow
+simulation with OpenFOAM. Bug reports and questions are welcome as GitHub issues;
+for anything else, contact johan@stromning.com.
