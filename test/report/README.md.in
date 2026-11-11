@@ -8,7 +8,7 @@
 
 # surfacePosition
 
-`surfacePosition` is an OpenFOAM (v2512) function object that reports the
+`surfacePosition` is an OpenFOAM.com function object that reports the
 height and position of a volume-of-fluid interface at a set of locations, with
 the same entries and output as OpenFOAM's `interfaceHeight`, which integrates
 the interpolated volume fraction along a sampled line. `surfacePosition` finds
@@ -85,11 +85,19 @@ with the isosurface cut of the geometric VoF reconstruction.
 
 ## 2. Usage
 
-`surfacePosition` is built into the library `libsurfacePosition` by
-`./Allwmake` (with OpenFOAM v2512 sourced). It links OpenFOAM's
+With OpenFOAM.com sourced ({{compatFirst}} or later, tested up to
+{{compatNewest}}, [section 4.5](#45-compatibility-with-openfoam-versions)):
+
+```sh
+git clone https://github.com/isoAdvector/surfacePosition.git
+cd surfacePosition
+./Allwmake
+```
+
+This builds the library `libsurfacePosition` into `$FOAM_USER_LIBBIN`, where a
+case finds it through `libs (surfacePosition);`; it links OpenFOAM's
 `finiteVolume`, `meshTools`, `sampling`, `lagrangian` and `geometricVoF`
-libraries. It compiles with OpenFOAM.com {{compatFirst}} and later
-([section 4.5](#45-compatibility-with-openfoam-versions)). Its entries and
+libraries. Build it again with each OpenFOAM version used. Its entries and
 output are those of `interfaceHeight`, so that a
 dictionary of `interfaceHeight` works after changing its `type` and `libs`, and
 post-processing tools for `interfaceHeight` read its output:
@@ -114,8 +122,11 @@ surfacePosition1
 The `interfaceHeight` entry `interpolationScheme` is not used. As in
 `interfaceHeight`, the `direction` points downwards, along gravity, and the
 heights are measured against it; `interfaceHeight`'s documentation calls it the
-direction of the interface, which is easily read as upwards. A `direction`
-against gravity gives a warning. The files
+direction of the interface, which is easily read as upwards. Give the
+direction of gravity of the case, e.g. `(0 -1 0)` when y is up, or leave it
+out to use gravity: a `direction` not along gravity gives a warning, as a
+direction copied from a case with another vertical axis would otherwise give
+wrong heights unnoticed. The files
 `height.dat` and `position.dat` in `postProcessing/<name>/<time>` hold, per
 location, the height $h_B$ of the liquid (in the mode, below) above the lower
 boundary, where the line leaves the mesh along the direction, the height
@@ -552,6 +563,12 @@ cd test
 cd report
 ./Allrun              # makeData.py, makeFigures.py (pvbatch), report.pdf, README.md
 ```
+
+`test/Allrun` runs `largeTiming` on 18 processors (set `NPROCS` on a machine
+with fewer cores) and the other tests at the same time on the remaining
+cores; `waveAccuracy` needs
+[streamFunctionWave](https://github.com/isoAdvector/streamFunctionWave) (see
+[test/README.md](test/README.md)). The suite takes about two minutes.
 
 Section 4.5 needs `test/compatibility/Allrun` to have been run before
 `test/report/Allrun`; it builds and tests with every OpenFOAM.com installation

@@ -37,7 +37,7 @@ Description
     Through each location a line runs along the direction (default: gravity)
     across the whole mesh, wherever the location is. The direction points
     downwards, along gravity, as in interfaceHeight, and the heights are
-    measured against it; a direction against gravity gives a warning. The
+    measured against it; a direction not along gravity gives a warning. The
     height of the liquid
     along the line is the sum of the lengths of the line inside the liquid:
     the whole segment in full cells, nothing in empty cells, and in interface

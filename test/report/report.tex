@@ -144,8 +144,9 @@ surfacePosition1
 The \iH{} entry \texttt{interpolationScheme} is not used. As in \iH{}, the
 \texttt{direction} points downwards, along gravity, and the heights are
 measured against it; the documentation of \iH{} calls it the direction of the
-interface, which is easily read as upwards. A \texttt{direction} against
-gravity gives a warning. The files
+interface, which is easily read as upwards. A \texttt{direction} not along
+gravity gives a warning, as a direction copied from a case with another
+vertical axis would otherwise give wrong heights unnoticed. The files
 \texttt{height.dat} and \texttt{position.dat} in
 \texttt{postProcessing/<name>/<time>} hold, per location, the height $h_B$ of the liquid (in the mode, below) above
 the lower boundary, where the line leaves the mesh along the direction, the height
@@ -680,6 +681,11 @@ cd report
 \texttt{makeData.py} writes the numbers and tables in \texttt{generated/}
 from the \texttt{results.json} files and the \texttt{postProcessing} data of
 the cases; \texttt{makeFigures.py} renders the figures from the case data with
-ParaView. This report was generated from the run of \testRun.
+ParaView. \texttt{test/Allrun} runs \texttt{largeTiming} on 18 processors
+(set \texttt{NPROCS} on a machine with fewer cores) and the other tests at the
+same time on the remaining cores; \texttt{waveAccuracy} needs
+\texttt{streamFunFoam} from the streamFunctionWave repository
+(\url{https://github.com/isoAdvector/streamFunctionWave}). This report was
+generated from the run of \testRun.
 
 \end{document}

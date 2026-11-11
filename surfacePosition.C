@@ -169,15 +169,32 @@ void Foam::functionObjects::surfacePosition::setLines()
 
         // The direction points downwards, as in interfaceHeight, whose
         // documentation calls it the direction of the interface: a direction
-        // against gravity is most likely an upward one given by mistake
-        if (gPtr && (down_ & gPtr->value()) < 0)
+        // against gravity is most likely an upward one given by mistake, and
+        // one across gravity most likely copied from a case with another
+        // vertical axis
+        if (gPtr && mag(gPtr->value()) > VSMALL)
         {
-            WarningInFunction
-                << type() << ' ' << name() << ": direction " << direction_
-                << " points against gravity " << gPtr->value() << nl
-                << "    The direction points downwards, along gravity, as in"
-                << " interfaceHeight; the heights are measured against it."
-                << endl;
+            const scalar cosAngle =
+                down_ & (gPtr->value()/mag(gPtr->value()));
+
+            if (cosAngle < 0)
+            {
+                WarningInFunction
+                    << type() << ' ' << name() << ": direction " << direction_
+                    << " points against gravity " << gPtr->value() << nl
+                    << "    The direction points downwards, along gravity, as"
+                    << " in interfaceHeight; the heights are measured against"
+                    << " it." << endl;
+            }
+            else if (cosAngle < 1 - 1e-6)
+            {
+                WarningInFunction
+                    << type() << ' ' << name() << ": direction " << direction_
+                    << " is not along gravity " << gPtr->value() << nl
+                    << "    The lines and the heights are along the direction;"
+                    << " give the direction of gravity, or leave it out to use"
+                    << " gravity." << endl;
+            }
         }
     }
     else
