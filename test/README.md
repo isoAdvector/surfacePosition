@@ -33,7 +33,8 @@ every OpenFOAM.com installation with `geometricVoF` in `~/OpenFOAM` (or
 `compatibility/log.compatibility` and takes about eight minutes.
 
 `waveAccuracy` needs `streamFunFoam` and `libstreamFunctionWaveFvPatchField`
-from the `streamFunctionWave` repository, found next to this repository or
+from the [streamFunctionWave](https://github.com/isoAdvector/streamFunctionWave)
+repository, found next to this repository or
 next to a directory above it (or `STREAMFUNCTIONWAVE_SRC` pointing to its
 `src/streamFunctionWave`).
 `largeTiming` binds one process per core (through a rank file) with local
